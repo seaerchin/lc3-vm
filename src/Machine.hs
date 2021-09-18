@@ -87,7 +87,7 @@ handleAdd :: [Bool] -> MachineState ()
 -- if bit 5 is 0, we know that this is addition using 2 registers
 -- else, this is addition using a immediate value
 handleAdd inst = do
-          machine <- get
+  machine <- get
   let registers = getRegisters machine
       isImmediate = inst !! 4
       sourceRegister = toWord $ slice inst 6 8
@@ -102,7 +102,18 @@ addValues registerIndex val dest = do
       registerVal = getGeneralRegisterContent registers registerIndex
       newValue = val + registerVal
       newRegisters = setGeneralRegister (getRegisters machine) dest newValue
-              newMachine = setRegisters machine newRegisters
-          put newMachine
-        else --   return $ setRegisters machine newRegisters
-          undefined
+      newMachine = setRegisters machine newRegisters
+  put newMachine
+
+-- computes an address from the instruction and add it to the PC
+handleLoadIndirect :: [Bool] -> MachineState ()
+handleLoadIndirect inst = do
+  machine <- get
+  let registers = getRegisters machine
+      memory = getMemory machine
+      destinationIndex = toWord $ slice inst 9 11
+      addr = toWord $ slice inst 0 8
+      pc = getPc registers
+      val = memory !! fromIntegral (memory !! (addr + pc))
+      m = setRegisters machine $ setGeneralRegister registers destinationIndex val
+  put m
