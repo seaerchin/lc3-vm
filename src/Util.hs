@@ -11,3 +11,6 @@ fromBits b = fromIntegral . sum . fmap (\(pow, shouldExp) -> if shouldExp then 2
 
 update :: [a] -> Int -> a -> [a]
 update ls idx val = zipWith (\i old -> (if idx == i then val else old)) [0 .. length ls] ls
+
+toWord :: (Num b) => [Bool] -> b
+toWord = fromIntegral . fromBits
