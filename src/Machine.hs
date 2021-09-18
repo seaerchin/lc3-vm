@@ -1,6 +1,7 @@
 module Machine where
 
 import Control.Monad.State.Lazy
+import Data.Bits ((.&.))
 import Data.Word (Word16, Word8)
 import Util
 
@@ -19,7 +20,7 @@ data Instruction = Branch | Add | Load | Store | JumpRegister | And | LoadRegist
 data OpCode = OpCode Instruction [Bool]
 
 -- indicates result of previous calc
-data Condition = Positive | Zero | Negative
+data Condition = Positive | Zero | Negative deriving (Show, Eq)
 
 data Machine = Machine Memory Registers
 
@@ -41,6 +42,20 @@ getGeneralRegisterContent r idx = getGeneralRegister r !! fromIntegral idx
 
 getPc :: Registers -> Int
 getPc (Registers _ p _) = p
+
+-- less boilerplate version
+getPc' :: MachineState Int
+getPc' = do
+  machine <- get
+  let registers = getRegisters machine
+  return (getPc registers)
+
+getCondition :: Registers -> Condition
+getCondition (Registers _ _ c) = c
+
+getCondition' :: MachineState Condition
+getCondition' = do
+  getCondition . getRegisters <$> get
 
 toCondition :: (Integral a) => a -> Condition
 toCondition 0 = Zero
@@ -64,6 +79,12 @@ setRegisters (Machine m _) = Machine m
 setPc :: Registers -> Int -> Registers
 setPc (Registers a _ c) pc = Registers a pc c
 
+setPc' :: Int -> MachineState ()
+setPc' pc = do
+  machine <- get
+  let newRegisters = setPc (getRegisters machine) pc
+  put (setRegisters machine newRegisters)
+
 incrementPc :: Registers -> Registers
 incrementPc r =
   let oldVal = getPc r
@@ -79,17 +100,22 @@ executeInstruction s =
 
 -- instruction handling logic
 handleInstruction :: OpCode -> MachineState ()
-handleInstruction oc@(OpCode Add inst) = handleAdd inst
-handleInstruction oc@(OpCode LoadIndirect inst) = handleLoadIndirect inst
+handleInstruction (OpCode Add inst) = handleAdd inst
+handleInstruction (OpCode LoadIndirect inst) = handleLoadIndirect inst
+handleInstruction (OpCode Load inst) = handleLoad inst
+handleInstruction (OpCode And inst) = handleAnd inst
+handleInstruction (OpCode Branch inst) = handleBranch inst
 
 handleAdd :: [Bool] -> MachineState ()
 -- as per specification:
 -- if bit 5 is 0, we know that this is addition using 2 registers
 -- else, this is addition using a immediate value
+-- this checks whether it is immediate or indirect,
+-- extracts the value and defers downwards
 handleAdd inst = do
   machine <- get
   let registers = getRegisters machine
-      isImmediate = inst !! 4
+      isImmediate = inst !! 5
       sourceRegister = toWord $ slice inst 6 8
       destinationRegister = toWord $ slice inst 9 11
       val = if isImmediate then fromBits $ slice inst 0 4 else getGeneralRegisterContent registers (toWord $ slice inst 0 2)
@@ -117,3 +143,37 @@ handleLoadIndirect inst = do
       val = memory !! fromIntegral (memory !! (addr + pc))
       m = setRegisters machine $ setGeneralRegister registers destinationIndex val
   put m
+
+handleLoad = undefined
+
+handleAnd :: [Bool] -> MachineState ()
+handleAnd inst = do
+  machine <- get
+  let registers = getRegisters machine
+      isImmediate = inst !! 5
+      sourceRegister = toWord $ slice inst 6 8
+      destinationRegister = toWord $ slice inst 9 11
+      val = if isImmediate then fromBits $ slice inst 0 4 else getGeneralRegisterContent registers (toWord $ slice inst 0 2)
+  andValues sourceRegister val destinationRegister
+
+andValues :: Word8 -> Word16 -> Word8 -> MachineState ()
+andValues srcIdx val dest = do
+  machine <- get
+  let registers = getRegisters machine
+      registerVal = getGeneralRegisterContent registers srcIdx
+      -- bitwise AND; courtesy of data.bits
+      newValue = val .&. registerVal
+      newRegisters = setGeneralRegister (getRegisters machine) dest newValue
+      newMachine = setRegisters machine newRegisters
+  put newMachine
+
+handleBranch :: [Bool] -> MachineState ()
+handleBranch inst = do
+  pc <- getPc'
+  condReg <- getCondition'
+  let n = inst !! 11
+      z = inst !! 10
+      p = inst !! 9
+      offset = toWord $ slice inst 0 8
+      updatedPc = if n && condReg == Negative || z && condReg == Zero || p && condReg == Positive then pc + offset else pc
+  setPc' updatedPc
