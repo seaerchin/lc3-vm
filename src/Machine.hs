@@ -185,3 +185,28 @@ handleBranch inst = do
       offset = toWord $ slice inst 0 8
       updatedPc = if n && condReg == Negative || z && condReg == Zero || p && condReg == Positive then pc + offset else pc
   setPc' updatedPc
+
+handleJump :: [Bool] -> MachineState ()
+handleJump inst = do
+  let regIdx = toWord $ slice inst 6 8
+  jump regIdx
+
+handleRet :: MachineState ()
+handleRet = jump 7
+
+-- set PC to content of register at regIdx
+jump :: Word8 -> MachineState ()
+jump regIdx = do
+  regContent <- getGeneralRegisterContent' regIdx
+  setPc' (fromIntegral regContent)
+
+-- jump to subroutine
+-- refer to lc3 isa for further details
+handleJumpRegister :: [Bool] -> MachineState ()
+handleJumpRegister inst = do
+  pc <- getPc'
+  -- store current pc value to return to
+  setGeneralRegister' 7 (fromIntegral pc)
+  let isImmediate = inst !! 11
+      pcValue = if isImmediate then pc + toWord (slice inst 10 0) else toWord $ slice inst 6 8
+  setPc' pcValue
