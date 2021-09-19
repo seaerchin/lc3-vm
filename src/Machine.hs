@@ -3,7 +3,10 @@ module Machine where
 import Control.Monad.State.Lazy
 import Data.Bits ((.&.))
 import Data.Word (Word16, Word8)
+import GHC.Num (wordToInteger)
 import Util
+
+-- NOTE: all methods postfixed by ' refer to methods bound by the state monad
 
 -- to be precise, this is actually a bounded array of size 65,536.
 type Memory = [Word16]
@@ -31,14 +34,30 @@ type MachineState a = State Machine a
 getMemory :: Machine -> Memory
 getMemory (Machine m _) = m
 
+getMemory' :: MachineState Memory
+getMemory' = do
+  machine <- get
+  let mem = getMemory machine
+  return mem
+
 getRegisters :: Machine -> Registers
 getRegisters (Machine _ r) = r
+
+getRegisters' :: MachineState Registers
+getRegisters' = do
+  getRegisters <$> get
 
 getGeneralRegister :: Registers -> [Word16]
 getGeneralRegister (Registers r _ _) = r
 
 getGeneralRegisterContent :: Registers -> Word8 -> Word16
 getGeneralRegisterContent r idx = getGeneralRegister r !! fromIntegral idx
+
+getGeneralRegisterContent' :: Word8 -> MachineState Word16
+getGeneralRegisterContent' idx = do
+  machine <- get
+  let reg = getRegisters machine
+  return (getGeneralRegisterContent reg idx)
 
 getPc :: Registers -> Int
 getPc (Registers _ p _) = p
@@ -73,6 +92,13 @@ setGeneralRegister (Registers g pc cr) idx val =
       cond = toCondition val
    in Registers newVals pc cond
 
+setGeneralRegister' :: Word8 -> Word16 -> MachineState ()
+setGeneralRegister' idx val = do
+  m <- get
+  r <- getRegisters'
+  let r' = setGeneralRegister r idx val
+  put (setRegisters m r')
+
 setRegisters :: Machine -> Registers -> Machine
 setRegisters (Machine m _) = Machine m
 
@@ -105,6 +131,9 @@ handleInstruction (OpCode LoadIndirect inst) = handleLoadIndirect inst
 handleInstruction (OpCode Load inst) = handleLoad inst
 handleInstruction (OpCode And inst) = handleAnd inst
 handleInstruction (OpCode Branch inst) = handleBranch inst
+handleInstruction (OpCode Jump inst) = handleJump inst
+handleInstruction (OpCode JumpRegister inst) = handleJumpRegister inst
+handleInstruction (OpCode LoadRegister inst) = handleLoadRegister inst
 
 handleAdd :: [Bool] -> MachineState ()
 -- as per specification:
@@ -113,59 +142,38 @@ handleAdd :: [Bool] -> MachineState ()
 -- this checks whether it is immediate or indirect,
 -- extracts the value and defers downwards
 handleAdd inst = do
-  machine <- get
-  let registers = getRegisters machine
-      isImmediate = inst !! 5
-      sourceRegister = toWord $ slice inst 6 8
-      destinationRegister = toWord $ slice inst 9 11
-      val = if isImmediate then fromBits $ slice inst 0 4 else getGeneralRegisterContent registers (toWord $ slice inst 0 2)
-  addValues sourceRegister val destinationRegister
-
-addValues :: Word8 -> Word16 -> Word8 -> MachineState ()
-addValues registerIndex val dest = do
-  machine <- get
-  let registers = getRegisters machine
-      registerVal = getGeneralRegisterContent registers registerIndex
-      newValue = val + registerVal
-      newRegisters = setGeneralRegister (getRegisters machine) dest newValue
-      newMachine = setRegisters machine newRegisters
-  put newMachine
+  sr1 <- getGeneralRegisterContent' (toWord $ slice inst 6 8)
+  sr2 <- getGeneralRegisterContent' (toWord $ slice inst 0 2)
+  let isImmediate = inst !! 5
+      dest = toWord $ slice inst 9 11
+      val = if isImmediate then fromBits $ slice inst 0 4 else sr2
+  setGeneralRegister' dest (val + sr1)
 
 -- computes an address from the instruction and add it to the PC
 handleLoadIndirect :: [Bool] -> MachineState ()
 handleLoadIndirect inst = do
-  machine <- get
-  let registers = getRegisters machine
-      memory = getMemory machine
-      destinationIndex = toWord $ slice inst 9 11
-      addr = toWord $ slice inst 0 8
-      pc = getPc registers
-      val = memory !! fromIntegral (memory !! (addr + pc))
-      m = setRegisters machine $ setGeneralRegister registers destinationIndex val
-  put m
+  mem <- getMemory'
+  pc <- getPc'
+  let dest = toWord $ slice inst 9 11
+      memContents = mem !! (pc + toWord (slice inst 0 8))
+  setGeneralRegister' dest (mem !! fromIntegral memContents)
 
-handleLoad = undefined
+handleLoad :: [Bool] -> MachineState ()
+handleLoad inst = do
+  let destIndex = toWord $ slice inst 9 11
+      offset = toWord $ slice inst 0 8
+  pc <- getPc'
+  mem <- getMemory'
+  setGeneralRegister' destIndex (mem !! (pc + offset))
 
 handleAnd :: [Bool] -> MachineState ()
 handleAnd inst = do
-  machine <- get
-  let registers = getRegisters machine
-      isImmediate = inst !! 5
-      sourceRegister = toWord $ slice inst 6 8
-      destinationRegister = toWord $ slice inst 9 11
-      val = if isImmediate then fromBits $ slice inst 0 4 else getGeneralRegisterContent registers (toWord $ slice inst 0 2)
-  andValues sourceRegister val destinationRegister
-
-andValues :: Word8 -> Word16 -> Word8 -> MachineState ()
-andValues srcIdx val dest = do
-  machine <- get
-  let registers = getRegisters machine
-      registerVal = getGeneralRegisterContent registers srcIdx
-      -- bitwise AND; courtesy of data.bits
-      newValue = val .&. registerVal
-      newRegisters = setGeneralRegister (getRegisters machine) dest newValue
-      newMachine = setRegisters machine newRegisters
-  put newMachine
+  sr1 <- getGeneralRegisterContent' (toWord $ slice inst 6 8)
+  sr2 <- getGeneralRegisterContent' (toWord $ slice inst 0 2)
+  let isImmediate = inst !! 5
+      dest = toWord $ slice inst 9 11
+      val = if isImmediate then fromBits $ slice inst 0 4 else sr2
+  setGeneralRegister' dest (val .&. sr1)
 
 handleBranch :: [Bool] -> MachineState ()
 handleBranch inst = do
