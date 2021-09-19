@@ -1,7 +1,7 @@
 module Machine where
 
 import Control.Monad.State.Lazy
-import Data.Bits ((.&.))
+import Data.Bits (Bits (complement), (.&.))
 import Data.Word (Word16, Word8)
 import GHC.Num (wordToInteger)
 import Util
@@ -10,6 +10,9 @@ import Util
 
 -- to be precise, this is actually a bounded array of size 65,536.
 type Memory = [Word16]
+
+-- TODO: actually make this correct
+-- type RegisterIndex = Word3
 
 -- 8 general purpose registers; program counter; condition register
 data Registers = Registers [Word16] Int Condition
@@ -110,6 +113,19 @@ setPc' pc = do
   machine <- get
   let newRegisters = setPc (getRegisters machine) pc
   put (setRegisters machine newRegisters)
+
+setMemory :: Machine -> Memory -> Machine
+setMemory (Machine _ r) mem = Machine mem r
+
+setMemory' :: Word16 -> Word16 -> MachineState ()
+setMemory' idx val = do
+  mem <- getMemory'
+  machine <- get
+  -- haskell lists are linked lists :/
+  -- ideally, this would be a vector but due to laziness, is left as-is for now.
+  let (pref, suff) = splitAt (fromIntegral idx) mem
+      suff' = drop 1 suff
+  put (setMemory machine (pref ++ [val] ++ suff'))
 
 incrementPc :: Registers -> Registers
 incrementPc r =
@@ -225,3 +241,42 @@ handleLoadEffectiveAddr inst = do
   let offset = toWord $ slice inst 0 8
       dest = toWord $ slice inst 9 11
   setGeneralRegister' dest (fromIntegral $ pc + offset)
+
+handleNot :: [Bool] -> MachineState ()
+handleNot inst = do
+  sr <- getGeneralRegisterContent' (toWord $ slice inst 6 8)
+  let dr = toWord $ slice inst 9 11
+  setGeneralRegister' dr (complement sr)
+
+handleStore :: [Bool] -> MachineState ()
+handleStore inst = do
+  pc <- getPc'
+  sr <- getGeneralRegisterContent' (toWord $ slice inst 9 11)
+  let offset = toWord $ slice inst 0 8
+  setMemory' (fromIntegral $ pc + offset) sr
+
+handleStoreIndirect :: [Bool] -> MachineState ()
+handleStoreIndirect inst = do
+  sr <- getGeneralRegisterContent' (toWord $ slice inst 9 11)
+  mem <- getMemory'
+  pc <- getPc'
+  let offset = toWord $ slice inst 0 8
+      memContents = mem !! (pc + offset)
+  setMemory' memContents sr
+
+handleStoreRegister :: [Bool] -> MachineState ()
+handleStoreRegister inst = do
+  baseR <- getGeneralRegisterContent' (toWord $ slice inst 6 8)
+  sr <- getGeneralRegisterContent' (toWord $ slice inst 9 11)
+  let offset = toWord $ slice inst 0 5
+  mem <- getMemory'
+  setMemory' (baseR + offset) sr
+
+handleTrap :: [Bool] -> MachineState ()
+handleTrap inst = do
+  -- first we set r7 to the pc
+  pc <- getPc'
+  setGeneralRegister' 7 (fromIntegral pc)
+  let trapvect8 = toWord $ slice inst 0 8
+  mem <- getMemory'
+  setPc' (fromIntegral $ mem !! trapvect8)
