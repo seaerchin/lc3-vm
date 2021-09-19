@@ -210,3 +210,18 @@ handleJumpRegister inst = do
   let isImmediate = inst !! 11
       pcValue = if isImmediate then pc + toWord (slice inst 10 0) else toWord $ slice inst 6 8
   setPc' pcValue
+
+handleLoadRegister :: [Bool] -> MachineState ()
+handleLoadRegister inst = do
+  mem <- getMemory'
+  baseR <- getGeneralRegisterContent' (toWord $ slice inst 6 8)
+  let destIndex = toWord $ slice inst 9 11
+      offset = toWord $ slice inst 0 5
+  setGeneralRegister' destIndex (mem !! fromIntegral (baseR + offset))
+
+handleLoadEffectiveAddr :: [Bool] -> MachineState ()
+handleLoadEffectiveAddr inst = do
+  pc <- getPc'
+  let offset = toWord $ slice inst 0 8
+      dest = toWord $ slice inst 9 11
+  setGeneralRegister' dest (fromIntegral $ pc + offset)
