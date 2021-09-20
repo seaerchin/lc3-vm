@@ -36,6 +36,7 @@ library
       base >=4.7 && <5
     , bytestring
     , mtl
+    , vector
   default-language: Haskell2010
 
 executable lc3-vm-exe
@@ -50,6 +51,7 @@ executable lc3-vm-exe
     , bytestring
     , lc3-vm
     , mtl
+    , vector
   default-language: Haskell2010
 
 test-suite lc3-vm-test
@@ -65,4 +67,5 @@ test-suite lc3-vm-test
     , bytestring
     , lc3-vm
     , mtl
+    , vector
   default-language: Haskell2010

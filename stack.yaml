@@ -39,7 +39,9 @@ packages:
 # - git: https://github.com/commercialhaskell/stack.git
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
 #
-# extra-deps: []
+extra-deps: 
+- vector-0.12.3.0@sha256:0ae2c1ba86f0077910be242ec6802cc3d7725fe7b2bea6987201aa3737b239b5,7953
+- primitive-0.7.2.0@sha256:d7c3635e83ae160129cdfe2be4092ab6389199d73a2c29adf904124dbcfe6100,2660
 
 # Override default flag values for local packages and extra-deps
 # flags: {}

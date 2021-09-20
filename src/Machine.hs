@@ -1,13 +1,24 @@
 module Machine where
 
 import Control.Monad.State.Lazy
-import Data.Bits (Bits (complement), shiftL, (.&.))
+import Data.Bits (Bits (complement), shiftL, shiftR, (.&.))
 import qualified Data.ByteString as B
 import Data.Char (chr, ord)
+import qualified Data.Vector as V
 import Data.Word (Word16, Word8)
 import GHC.Num (wordToInteger)
-import System.IO (stdin)
+import System.Environment (getArgs)
+import System.Exit (exitFailure, exitSuccess)
+import System.IO (BufferMode (NoBuffering), hSetBuffering, stdin)
 import Util
+  ( fromBits,
+    lowerMask,
+    processBits,
+    slice,
+    toWord,
+    update,
+    upperMask,
+  )
 
 -- NOTE: all methods postfixed by ' refer to methods bound by the state monad
 
@@ -35,6 +46,8 @@ data Machine = Machine Memory Registers
 
 -- current result of instruction
 type MachineState = StateT Machine IO
+
+data Trap = GetC | Out | Puts | In | Putsp | Halt
 
 mrKBSR :: Integer
 mrKBSR = 0xFE00 -- /* keyboard status */
@@ -85,7 +98,7 @@ getRegisters :: Machine -> Registers
 getRegisters (Machine _ r) = r
 
 getRegisters' :: MachineState Registers
-getRegisters' = do
+getRegisters' =
   getRegisters <$> get
 
 getGeneralRegister :: Registers -> [Word16]
@@ -114,7 +127,7 @@ getCondition :: Registers -> Condition
 getCondition (Registers _ _ c) = c
 
 getCondition' :: MachineState Condition
-getCondition' = do
+getCondition' =
   getCondition . getRegisters <$> get
 
 toCondition :: (Integral a) => a -> Condition
@@ -165,20 +178,93 @@ setMemory' idx val = do
       suff' = drop 1 suff
   put (setMemory machine (pref ++ [val] ++ suff'))
 
-incrementPc :: Registers -> Registers
-incrementPc r =
-  let oldVal = getPc r
-   in setPc r (oldVal + 1)
+incrementPc' :: MachineState ()
+incrementPc' = do
+  pc <- getPc'
+  setPc' (pc + 1)
 
--- this handles reading in the data,
--- parse to the actual instruction
--- and handle incrementing of PC before execution of instruction
-executeInstruction :: FilePath -> IO ()
-executeInstruction s =
-  let handle = readFile s
-   in handle >>= \s -> print s
+-- services to handle instructions
 
--- instruction handling logic
+runRoutine = flip execStateT
+
+main :: IO ()
+main = do
+  hSetBuffering stdin NoBuffering
+  memory <- readImageFile
+  let registers = Registers (replicate 8 0) 0x3000 Zero
+      machine = Machine memory registers
+  finished <- runRoutine machine routine
+  print "vm done"
+
+routine :: MachineState ()
+routine = do
+  setPc' 3000
+  fix $ \loop -> do
+    pc <- getPc'
+    handleRawInst >> loop
+
+-- reads an image file
+readImageFile :: IO Memory
+readImageFile = do
+  args <- getArgs
+  case args of
+    fileName : _ -> do
+      (origin : bytes) <- processBits . B.unpack <$> B.readFile fileName
+      let pad = V.replicate (fromIntegral origin - 1) (0x0 :: Word16)
+          mid = V.fromList (origin : bytes)
+          end = V.replicate (65536 - (V.length pad + V.length mid)) (0x0 :: Word16)
+      pure $ V.toList (pad <> mid <> end)
+    _ -> do
+      putStrLn "Please enter path to LC3 program"
+      exitFailure
+
+handleRawInst :: MachineState ()
+handleRawInst = do
+  pc <- getPc'
+  mem <- getMemory'
+  rawInst <- memRead (fromIntegral pc)
+  let opCode = parseInst rawInst
+  incrementPc'
+  handleInstruction opCode
+
+parseInst :: Word16 -> OpCode
+parseInst raw =
+  -- top 4 bits are the opcode
+  let op = (raw .&. 15 `shiftL` 12) `shiftR` 12
+      rest = (2 ^ 12 - 1) .&. raw
+   in OpCode (toInst op) (toBits12 $ fromIntegral rest)
+
+toInst :: Word16 -> Instruction
+toInst 1 = Add
+toInst 5 = And
+toInst 0 = Branch
+toInst 12 = Jump
+toInst 4 = JumpRegister
+toInst 2 = Load
+toInst 10 = LoadIndirect
+toInst 6 = LoadRegister
+toInst 14 = LoadEffectiveAddr
+toInst 9 = Not
+toInst 3 = Store
+toInst 11 = StoreIndirect
+toInst 7 = StoreRegister
+toInst 15 = ExecuteTrap
+toInst _ = undefined
+
+toBitsBySize :: Int -> Int -> [Bool]
+toBitsBySize 0 x = []
+toBitsBySize sz 0 = [False | i <- [1 .. sz]]
+toBitsBySize sz x =
+  if k == 0
+    then False : toBitsBySize n x
+    else True : toBitsBySize n (x - k * m)
+  where
+    n = sz - 1
+    m = 2 ^ n
+    k = x `div` m
+
+toBits12 = toBitsBySize 12
+
 handleInstruction :: OpCode -> MachineState ()
 handleInstruction (OpCode Add inst) = handleAdd inst
 handleInstruction (OpCode LoadIndirect inst) = handleLoadIndirect inst
@@ -188,6 +274,12 @@ handleInstruction (OpCode Branch inst) = handleBranch inst
 handleInstruction (OpCode Jump inst) = handleJump inst
 handleInstruction (OpCode JumpRegister inst) = handleJumpRegister inst
 handleInstruction (OpCode LoadRegister inst) = handleLoadRegister inst
+handleInstruction (OpCode Store inst) = handleStore inst
+handleInstruction (OpCode StoreRegister inst) = handleStoreRegister inst
+handleInstruction (OpCode Not inst) = handleNot inst
+handleInstruction (OpCode StoreIndirect inst) = handleStoreIndirect inst
+handleInstruction (OpCode LoadEffectiveAddr inst) = handleLoadEffectiveAddr inst
+handleInstruction (OpCode ExecuteTrap inst) = handleTrap inst
 
 handleAdd :: [Bool] -> MachineState ()
 -- as per specification:
@@ -314,17 +406,28 @@ handleStoreRegister inst = do
 -- because this function is pure,
 -- the effect is denoted by ""
 handleTrap :: [Bool] -> MachineState ()
-handleTrap inst = undefined
+handleTrap inst = do
+  let trapvect8 = toTrap $ slice inst 0 8
+  executeTrap trapvect8
 
--- first we set r7 to the pc
--- pc <- getPc'
--- setGeneralRegister' 7 (fromIntegral pc)
--- let trapvect8 = toTrap $ toWord $ slice inst 0 8
--- mem <- getMemory'
--- setPc' (fromIntegral $ mem !! trapvect8)
+toTrap :: [Bool] -> Trap
+toTrap inst =
+  let trap = toWord inst
+   in case trap of
+        0x20 -> GetC
+        0x21 -> Out
+        0x22 -> Puts
+        0x23 -> In
+        0x24 -> Putsp
+        _ -> Halt
 
--- executeTrap :: Trap -> MachineState -> IO ()
--- executeTrap = undefined
+executeTrap :: Trap -> MachineState ()
+executeTrap GetC = getc
+executeTrap Out = out
+executeTrap Puts = puts
+executeTrap In = in'
+executeTrap Putsp = putsp
+executeTrap _ = liftIO halt
 
 getc :: MachineState ()
 getc = do
@@ -370,3 +473,6 @@ putsp = do
       let extractList = takeWhile (/= 0)
        in join . map splitWord . extractList
     splitWord word = [word .&. upperMask, word .&. lowerMask]
+
+-- kek
+halt = exitSuccess

@@ -1,7 +1,8 @@
 module Util where
 
-import Data.Bits (Bits, xor)
-import Data.Word (Word16)
+import Data.Bits (Bits, setBit, testBit, xor)
+import Data.List (foldl')
+import Data.Word (Word16, Word8)
 
 -- slices from [start, end]
 slice :: (Integral a1, Enum a1, Ord a1) => [a2] -> a1 -> a1 -> [a2]
@@ -21,3 +22,25 @@ lowerMask = 2 ^ 8 - 1
 
 upperMask :: (Integral a, Bits a) => a
 upperMask = 2 ^ 16 - 1 `xor` lowerMask
+
+merge :: Word8 -> Word8 -> Word16
+merge l r = foldl' go 0x0 (zip [15, 14 .. 0] bits)
+  where
+    go acc (n, True) = setBit acc n
+    go acc (n, False) = acc
+    bits =
+      map (testBit l) [7, 6 .. 0]
+        ++ map (testBit r) [7, 6 .. 0]
+
+-- | Combine two-byte chunks into Word16
+processBits :: [Word8] -> [Word16]
+processBits bytes = map go (chunks 2 bytes)
+  where
+    go [_] = error "odd number"
+    go [x, y] = merge x y
+
+chunks :: Int -> [a] -> [[a]]
+chunks _ [] = []
+chunks n xs = do
+  let (l, r) = splitAt n xs
+  l : chunks n r
