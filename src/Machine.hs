@@ -1,10 +1,12 @@
 module Machine where
 
 import Control.Monad.State.Lazy
-import Data.Bits (Bits (complement), (.&.))
+import Data.Bits (Bits (complement), shiftL, (.&.))
+import qualified Data.ByteString as B
 import Data.Char (chr, ord)
 import Data.Word (Word16, Word8)
 import GHC.Num (wordToInteger)
+import System.IO (stdin)
 import Util
 
 -- NOTE: all methods postfixed by ' refer to methods bound by the state monad
@@ -41,6 +43,35 @@ mrKBDR :: Integer
 mrKBDR = 0xFE02 -- /* keyboard data */
 
 -- accessors
+checkKey :: IO (Maybe Word16)
+checkKey = do
+  result <- B.hGetNonBlocking stdin 1
+  case result of
+    x
+      | B.null x -> pure Nothing
+      | otherwise -> do
+        let [l] = B.unpack x
+        pure $ Just $ fromIntegral l
+
+memRead :: Word16 -> MachineState Word16
+memRead addr
+  | addr == fromIntegral mrKBSR = handleKey
+  | otherwise = do
+    mem <- getMemory'
+    return (mem !! fromIntegral addr)
+  where
+    handleKey = do
+      maybeKey <- liftIO checkKey
+      case maybeKey of
+        Just key -> do
+          mem <- getMemory'
+          setMemory' (fromIntegral mrKBSR) (1 `shiftL` 15)
+          setMemory' (fromIntegral mrKBDR) key
+        Nothing ->
+          setMemory' (fromIntegral mrKBSR) 0
+      mem <- getMemory'
+      return (mem !! fromIntegral addr)
+
 getMemory :: Machine -> Memory
 getMemory (Machine m _) = m
 
