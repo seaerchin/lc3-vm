@@ -2,6 +2,7 @@ module Machine where
 
 import Control.Monad.State.Lazy
 import Data.Bits (Bits (complement), (.&.))
+import Data.Char (chr, ord)
 import Data.Word (Word16, Word8)
 import GHC.Num (wordToInteger)
 import Util
@@ -31,7 +32,13 @@ data Condition = Positive | Zero | Negative deriving (Show, Eq)
 data Machine = Machine Memory Registers
 
 -- current result of instruction
-type MachineState a = State Machine a
+type MachineState = StateT Machine IO
+
+mrKBSR :: Integer
+mrKBSR = 0xFE00 -- /* keyboard status */
+
+mrKBDR :: Integer
+mrKBDR = 0xFE02 -- /* keyboard data */
 
 -- accessors
 getMemory :: Machine -> Memory
@@ -272,11 +279,63 @@ handleStoreRegister inst = do
   mem <- getMemory'
   setMemory' (baseR + offset) sr
 
+-- trap routines read/write to the IO stream
+-- because this function is pure,
+-- the effect is denoted by ""
 handleTrap :: [Bool] -> MachineState ()
-handleTrap inst = do
-  -- first we set r7 to the pc
-  pc <- getPc'
-  setGeneralRegister' 7 (fromIntegral pc)
-  let trapvect8 = toWord $ slice inst 0 8
+handleTrap inst = undefined
+
+-- first we set r7 to the pc
+-- pc <- getPc'
+-- setGeneralRegister' 7 (fromIntegral pc)
+-- let trapvect8 = toTrap $ toWord $ slice inst 0 8
+-- mem <- getMemory'
+-- setPc' (fromIntegral $ mem !! trapvect8)
+
+-- executeTrap :: Trap -> MachineState -> IO ()
+-- executeTrap = undefined
+
+getc :: MachineState ()
+getc = do
+  c <- liftIO getChar
+  let ascii = ord c
+  setGeneralRegister' 0 (fromIntegral ascii)
+
+out :: MachineState ()
+out = do
+  i <- getGeneralRegisterContent' 0
+  -- only lower 8 digits should be taken
+  -- perform bitwise AND operation
+  let lower = i .&. lowerMask
+      c = chr (fromIntegral lower)
+  liftIO $ print c
+
+puts :: MachineState ()
+puts = do
+  initialAddr <- getGeneralRegisterContent' 0
   mem <- getMemory'
-  setPc' (fromIntegral $ mem !! trapvect8)
+  let memSlice = extractChars $ slice mem initialAddr (fromIntegral $ length mem - 1)
+  liftIO $ forM_ memSlice print
+  where
+    extractChars = takeWhile (/= 0)
+
+-- to differentiate from keyword
+in' :: MachineState ()
+in' = do
+  liftIO $ print "Please enter a character"
+  c <- liftIO getChar
+  setGeneralRegister' 0 (fromIntegral $ ord c)
+  liftIO $ print c
+
+-- copied b/c laze
+putsp :: MachineState ()
+putsp = do
+  initialAddr <- getGeneralRegisterContent' 0
+  mem <- getMemory'
+  let memSlice = extractChars $ slice mem initialAddr (fromIntegral $ length mem - 1)
+  liftIO $ forM_ memSlice print
+  where
+    extractChars =
+      let extractList = takeWhile (/= 0)
+       in join . map splitWord . extractList
+    splitWord word = [word .&. upperMask, word .&. lowerMask]
