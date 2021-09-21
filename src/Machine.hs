@@ -322,7 +322,7 @@ handleAnd inst = do
       dest = toWord $ slice inst 9 11
       val = if isImmediate then signExtend (fromBits $ slice inst 0 4) 5 else sr2
   setGeneralRegister' dest (val .&. sr1)
-  setConditionRegister' val
+  setConditionRegister' (val .&. sr1)
 
 handleBranch :: [Bool] -> MachineState ()
 handleBranch inst = do
