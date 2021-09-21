@@ -212,11 +212,8 @@ main = do
   memory <- readImageFile
   let registers = Registers (replicate 8 0) 0x3000 Zero
       machine = Machine memory registers
-  runRoutine machine routine
+  runRoutine machine (forever handleRawInst)
   print "vm done"
-
-routine :: MachineState ()
-routine = forever handleRawInst
 
 -- reads an image file
 readImageFile :: IO Memory
@@ -239,14 +236,14 @@ handleRawInst = do
   mem <- getMemory'
   rawInst <- memRead (fromIntegral pc)
   let opCode = parseInst rawInst
-  -- liftIO $ print opCode
+  liftIO $ print opCode
   incrementPc'
   handleInstruction opCode
 
 parseInst :: Word16 -> OpCode
 parseInst raw =
   -- top 4 bits are the opcode
-  let op = (raw .&. 15 `shiftL` 12) `shiftR` 12
+  let op = (raw .&. (15 `shiftL` 12)) `shiftR` 12
       rest = (2 ^ 12 - 1) .&. raw
    in OpCode (toInst op) (reverse $ toBits12 $ fromIntegral rest)
 
@@ -354,11 +351,10 @@ handleJumpRegister inst = do
   pc <- getPc'
   -- store current pc value to return to
   setGeneralRegister' 7 pc
-  mem <- getMemory'
   let isImmediate = inst !! 11
-      offset = signExtend (toWord $ slice inst 10 0) 11
-      baseR = mem !! toWord (slice inst 6 8)
-      pcValue = if isImmediate then pc + offset else baseR
+      offset = signExtend (toWord $ slice inst 0 10) 11
+  baseR <- memRead $ toWord (slice inst 6 8)
+  let pcValue = if isImmediate then pc + offset else baseR
   setPc' pcValue
 
 handleLoad :: [Bool] -> MachineState ()
@@ -421,8 +417,8 @@ handleStoreIndirect inst = do
   mem <- getMemory'
   pc <- getPc'
   let offset = signExtend (toWord $ slice inst 0 8) 9
-      memContents = mem !! fromIntegral (pc + offset)
-      memContents' = mem !! fromIntegral memContents
+  memContents <- memRead (pc + offset)
+  memContents' <- memRead memContents
   setMemory' memContents' sr
 
 handleStoreRegister :: [Bool] -> MachineState ()
