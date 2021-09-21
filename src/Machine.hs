@@ -149,7 +149,7 @@ setConditionRegister' val
       m <- get
       r <- getRegisters'
       let r' = setConditionRegister r x
-          m' = setRegisters m r
+          m' = setRegisters m r'
       put m'
 
 -- sets register at idx to val
@@ -157,8 +157,7 @@ setConditionRegister' val
 setGeneralRegister :: Registers -> Word8 -> Word16 -> Registers
 setGeneralRegister (Registers g pc cr) idx val =
   let newVals = update g (fromIntegral idx) val
-      cond = toCondition val
-   in Registers newVals pc cond
+   in Registers newVals pc cr
 
 setGeneralRegister' :: Word8 -> Word16 -> MachineState ()
 setGeneralRegister' idx val = do
@@ -215,6 +214,12 @@ main = do
   runRoutine machine (forever handleRawInst)
   print "vm done"
 
+routine :: MachineState ()
+routine = do
+  setPc' 0x3000
+  fix $ \loop -> do
+    handleRawInst >> loop
+
 -- reads an image file
 readImageFile :: IO Memory
 readImageFile = do
@@ -236,7 +241,7 @@ handleRawInst = do
   mem <- getMemory'
   rawInst <- memRead (fromIntegral pc)
   let opCode = parseInst rawInst
-  liftIO $ print opCode
+  -- liftIO $ print opCode
   incrementPc'
   handleInstruction opCode
 
@@ -307,7 +312,7 @@ handleAdd inst = do
       dest = toWord $ slice inst 9 11
       val = if isImmediate then signExtend (fromBits $ slice inst 0 4) 5 else sr2
   setGeneralRegister' dest (val + sr1)
-  setConditionRegister' val
+  setConditionRegister' (val + sr1)
 
 handleAnd :: [Bool] -> MachineState ()
 handleAnd inst = do
@@ -372,6 +377,7 @@ handleLoadIndirect inst = do
   mem <- getMemory'
   pc <- getPc'
   let dest = toWord $ slice inst 9 11
+      val = pc + signExtend (toWord (slice inst 0 8)) 9
   memContents <- memRead (pc + signExtend (toWord (slice inst 0 8)) 9)
   memContents' <- memRead memContents
   setGeneralRegister' dest memContents'
@@ -433,8 +439,6 @@ handleStoreRegister inst = do
 handleTrap :: [Bool] -> MachineState ()
 handleTrap inst = do
   let trapvect8 = toTrap $ slice inst 0 8
-  -- liftIO $ putStrLn "WITHIN TRAP"
-  -- liftIO $ print trapvect8
   executeTrap trapvect8
 
 toTrap :: [Bool] -> Trap
