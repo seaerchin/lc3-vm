@@ -1,12 +1,11 @@
 module Util where
 
-import Data.Bits (Bits, setBit, testBit, xor)
+import Data.Bits (Bits, setBit, shiftL, shiftR, testBit, xor, (.&.), (.|.))
 import Data.List (foldl')
 import Data.Word (Word16, Word8)
 
 -- slices from [start, end]
-slice :: (Integral a1, Enum a1, Ord a1) => [a2] -> a1 -> a1 -> [a2]
-slice arr start end = [x | start <= end, (x, j) <- zip arr [1 .. end]]
+slice xs from to = take (to - from + 1) (drop from xs)
 
 fromBits :: [Bool] -> Word16
 fromBits b = fromIntegral . sum . fmap (\(pow, shouldExp) -> if shouldExp then 2 ^ pow else 0) $ zip [0 .. length b] b
@@ -44,3 +43,8 @@ chunks _ [] = []
 chunks n xs = do
   let (l, r) = splitAt n xs
   l : chunks n r
+
+signExtend :: Word16 -> Int -> Word16
+signExtend x bitCount
+  | x `shiftR` (bitCount - 1) .&. 1 == 1 = x .|. (0xFFFF `shiftL` bitCount)
+  | otherwise = x

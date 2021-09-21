@@ -1,7 +1,7 @@
 module Machine where
 
 import Control.Monad.State.Lazy
-import Data.Bits (Bits (complement), shiftL, shiftR, (.&.))
+import Data.Bits (Bits (complement), shiftL, shiftR, testBit, (.&.))
 import qualified Data.ByteString as B
 import Data.Char (chr, ord)
 import qualified Data.Vector as V
@@ -9,11 +9,12 @@ import Data.Word (Word16, Word8)
 import GHC.Num (wordToInteger)
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
-import System.IO (BufferMode (NoBuffering), hSetBuffering, stdin)
+import System.IO (BufferMode (NoBuffering), hFlush, hSetBuffering, stdin, stdout)
 import Util
   ( fromBits,
     lowerMask,
     processBits,
+    signExtend,
     slice,
     toWord,
     update,
@@ -29,15 +30,15 @@ type Memory = [Word16]
 -- type RegisterIndex = Word3
 
 -- 8 general purpose registers; program counter; condition register
-data Registers = Registers [Word16] Int Condition
+data Registers = Registers [Word16] Word16 Condition deriving (Eq, Show)
 
 -- all possible instructions
 -- note: not supporting rti/reserve
-data Instruction = Branch | Add | Load | Store | JumpRegister | And | LoadRegister | StoreRegister | Not | LoadIndirect | StoreIndirect | Jump | LoadEffectiveAddr | ExecuteTrap
+data Instruction = Branch | Add | Load | Store | JumpRegister | And | LoadRegister | StoreRegister | Not | LoadIndirect | StoreIndirect | Jump | LoadEffectiveAddr | ExecuteTrap deriving (Eq, Show)
 
 -- An opcode is an instruction (left 4 bits technically cos ~16 instructions) + data of instructions (remaining array of size 12)
 -- This is technically a bit-array of size 16
-data OpCode = OpCode Instruction [Bool]
+data OpCode = OpCode Instruction [Bool] deriving (Eq, Show)
 
 -- indicates result of previous calc
 data Condition = Positive | Zero | Negative deriving (Show, Eq)
@@ -47,7 +48,7 @@ data Machine = Machine Memory Registers
 -- current result of instruction
 type MachineState = StateT Machine IO
 
-data Trap = GetC | Out | Puts | In | Putsp | Halt
+data Trap = GetC | Out | Puts | In | Putsp | Halt deriving (Show, Eq)
 
 mrKBSR :: Integer
 mrKBSR = 0xFE00 -- /* keyboard status */
@@ -113,11 +114,11 @@ getGeneralRegisterContent' idx = do
   let reg = getRegisters machine
   return (getGeneralRegisterContent reg idx)
 
-getPc :: Registers -> Int
+getPc :: Registers -> Word16
 getPc (Registers _ p _) = p
 
 -- less boilerplate version
-getPc' :: MachineState Int
+getPc' :: MachineState Word16
 getPc' = do
   machine <- get
   let registers = getRegisters machine
@@ -138,6 +139,19 @@ toCondition x = if x < 0 then Negative else Positive
 setConditionRegister :: Registers -> Condition -> Registers
 setConditionRegister (Registers g pc _) = Registers g pc
 
+setConditionRegister' :: Word16 -> MachineState ()
+setConditionRegister' val
+  | val == 0 = aux Zero
+  | val `testBit` 15 = aux Negative
+  | otherwise = aux Positive
+  where
+    aux x = do
+      m <- get
+      r <- getRegisters'
+      let r' = setConditionRegister r x
+          m' = setRegisters m r
+      put m'
+
 -- sets register at idx to val
 -- automatically sets condition register based on result
 setGeneralRegister :: Registers -> Word8 -> Word16 -> Registers
@@ -156,10 +170,10 @@ setGeneralRegister' idx val = do
 setRegisters :: Machine -> Registers -> Machine
 setRegisters (Machine m _) = Machine m
 
-setPc :: Registers -> Int -> Registers
+setPc :: Registers -> Word16 -> Registers
 setPc (Registers a _ c) pc = Registers a pc c
 
-setPc' :: Int -> MachineState ()
+setPc' :: Word16 -> MachineState ()
 setPc' pc = do
   machine <- get
   let newRegisters = setPc (getRegisters machine) pc
@@ -187,21 +201,22 @@ incrementPc' = do
 
 runRoutine = flip execStateT
 
+dump :: MachineState ()
+dump = do
+  reg <- getRegisters'
+  liftIO $ print reg
+
 main :: IO ()
 main = do
   hSetBuffering stdin NoBuffering
   memory <- readImageFile
   let registers = Registers (replicate 8 0) 0x3000 Zero
       machine = Machine memory registers
-  finished <- runRoutine machine routine
+  runRoutine machine routine
   print "vm done"
 
 routine :: MachineState ()
-routine = do
-  setPc' 3000
-  fix $ \loop -> do
-    pc <- getPc'
-    handleRawInst >> loop
+routine = forever handleRawInst
 
 -- reads an image file
 readImageFile :: IO Memory
@@ -224,6 +239,7 @@ handleRawInst = do
   mem <- getMemory'
   rawInst <- memRead (fromIntegral pc)
   let opCode = parseInst rawInst
+  -- liftIO $ print opCode
   incrementPc'
   handleInstruction opCode
 
@@ -232,7 +248,7 @@ parseInst raw =
   -- top 4 bits are the opcode
   let op = (raw .&. 15 `shiftL` 12) `shiftR` 12
       rest = (2 ^ 12 - 1) .&. raw
-   in OpCode (toInst op) (toBits12 $ fromIntegral rest)
+   in OpCode (toInst op) (reverse $ toBits12 $ fromIntegral rest)
 
 toInst :: Word16 -> Instruction
 toInst 1 = Add
@@ -292,25 +308,9 @@ handleAdd inst = do
   sr2 <- getGeneralRegisterContent' (toWord $ slice inst 0 2)
   let isImmediate = inst !! 5
       dest = toWord $ slice inst 9 11
-      val = if isImmediate then fromBits $ slice inst 0 4 else sr2
+      val = if isImmediate then signExtend (fromBits $ slice inst 0 4) 5 else sr2
   setGeneralRegister' dest (val + sr1)
-
--- computes an address from the instruction and add it to the PC
-handleLoadIndirect :: [Bool] -> MachineState ()
-handleLoadIndirect inst = do
-  mem <- getMemory'
-  pc <- getPc'
-  let dest = toWord $ slice inst 9 11
-      memContents = mem !! (pc + toWord (slice inst 0 8))
-  setGeneralRegister' dest (mem !! fromIntegral memContents)
-
-handleLoad :: [Bool] -> MachineState ()
-handleLoad inst = do
-  let destIndex = toWord $ slice inst 9 11
-      offset = toWord $ slice inst 0 8
-  pc <- getPc'
-  mem <- getMemory'
-  setGeneralRegister' destIndex (mem !! (pc + offset))
+  setConditionRegister' val
 
 handleAnd :: [Bool] -> MachineState ()
 handleAnd inst = do
@@ -318,8 +318,9 @@ handleAnd inst = do
   sr2 <- getGeneralRegisterContent' (toWord $ slice inst 0 2)
   let isImmediate = inst !! 5
       dest = toWord $ slice inst 9 11
-      val = if isImmediate then fromBits $ slice inst 0 4 else sr2
+      val = if isImmediate then signExtend (fromBits $ slice inst 0 4) 5 else sr2
   setGeneralRegister' dest (val .&. sr1)
+  setConditionRegister' val
 
 handleBranch :: [Bool] -> MachineState ()
 handleBranch inst = do
@@ -328,9 +329,15 @@ handleBranch inst = do
   let n = inst !! 11
       z = inst !! 10
       p = inst !! 9
-      offset = toWord $ slice inst 0 8
+      offset = signExtend (toWord $ slice inst 0 8) 9
       updatedPc = if n && condReg == Negative || z && condReg == Zero || p && condReg == Positive then pc + offset else pc
   setPc' updatedPc
+
+-- set PC to content of register at regIdx
+jump :: Word8 -> MachineState ()
+jump regIdx = do
+  regContent <- getGeneralRegisterContent' regIdx
+  setPc' regContent
 
 handleJump :: [Bool] -> MachineState ()
 handleJump inst = do
@@ -340,74 +347,98 @@ handleJump inst = do
 handleRet :: MachineState ()
 handleRet = jump 7
 
--- set PC to content of register at regIdx
-jump :: Word8 -> MachineState ()
-jump regIdx = do
-  regContent <- getGeneralRegisterContent' regIdx
-  setPc' (fromIntegral regContent)
-
 -- jump to subroutine
 -- refer to lc3 isa for further details
 handleJumpRegister :: [Bool] -> MachineState ()
 handleJumpRegister inst = do
   pc <- getPc'
   -- store current pc value to return to
-  setGeneralRegister' 7 (fromIntegral pc)
+  setGeneralRegister' 7 pc
+  mem <- getMemory'
   let isImmediate = inst !! 11
-      pcValue = if isImmediate then pc + toWord (slice inst 10 0) else toWord $ slice inst 6 8
+      offset = signExtend (toWord $ slice inst 10 0) 11
+      baseR = mem !! toWord (slice inst 6 8)
+      pcValue = if isImmediate then pc + offset else baseR
   setPc' pcValue
+
+handleLoad :: [Bool] -> MachineState ()
+handleLoad inst = do
+  let destIndex = toWord $ slice inst 9 11
+      offset = signExtend (toWord $ slice inst 0 8) 9
+  pc <- getPc'
+  memContents <- memRead (pc + offset)
+  setGeneralRegister' destIndex memContents
+  setConditionRegister' memContents
+
+-- computes an address from the instruction and add it to the PC
+handleLoadIndirect :: [Bool] -> MachineState ()
+handleLoadIndirect inst = do
+  mem <- getMemory'
+  pc <- getPc'
+  let dest = toWord $ slice inst 9 11
+  memContents <- memRead (pc + signExtend (toWord (slice inst 0 8)) 9)
+  memContents' <- memRead memContents
+  setGeneralRegister' dest memContents'
+  setConditionRegister' memContents'
 
 handleLoadRegister :: [Bool] -> MachineState ()
 handleLoadRegister inst = do
-  mem <- getMemory'
   baseR <- getGeneralRegisterContent' (toWord $ slice inst 6 8)
   let destIndex = toWord $ slice inst 9 11
-      offset = toWord $ slice inst 0 5
-  setGeneralRegister' destIndex (mem !! fromIntegral (baseR + offset))
+      offset = signExtend (toWord $ slice inst 0 5) 6
+  memContent <- memRead (baseR + offset)
+  setGeneralRegister' destIndex memContent
+  setConditionRegister' memContent
 
 handleLoadEffectiveAddr :: [Bool] -> MachineState ()
 handleLoadEffectiveAddr inst = do
   pc <- getPc'
-  let offset = toWord $ slice inst 0 8
+  let offset = signExtend (toWord $ slice inst 0 8) 9
       dest = toWord $ slice inst 9 11
-  setGeneralRegister' dest (fromIntegral $ pc + offset)
+      val = pc + offset
+  setGeneralRegister' dest val
+  setConditionRegister' val
 
+-- check if two's complement is correct
 handleNot :: [Bool] -> MachineState ()
 handleNot inst = do
   sr <- getGeneralRegisterContent' (toWord $ slice inst 6 8)
   let dr = toWord $ slice inst 9 11
-  setGeneralRegister' dr (complement sr)
+      val = complement sr
+  setGeneralRegister' dr val
+  setConditionRegister' val
 
 handleStore :: [Bool] -> MachineState ()
 handleStore inst = do
   pc <- getPc'
   sr <- getGeneralRegisterContent' (toWord $ slice inst 9 11)
-  let offset = toWord $ slice inst 0 8
-  setMemory' (fromIntegral $ pc + offset) sr
+  let offset = signExtend (toWord $ slice inst 0 8) 9
+  setMemory' (pc + offset) sr
 
 handleStoreIndirect :: [Bool] -> MachineState ()
 handleStoreIndirect inst = do
   sr <- getGeneralRegisterContent' (toWord $ slice inst 9 11)
   mem <- getMemory'
   pc <- getPc'
-  let offset = toWord $ slice inst 0 8
-      memContents = mem !! (pc + offset)
-  setMemory' memContents sr
+  let offset = signExtend (toWord $ slice inst 0 8) 9
+      memContents = mem !! fromIntegral (pc + offset)
+      memContents' = mem !! fromIntegral memContents
+  setMemory' memContents' sr
 
 handleStoreRegister :: [Bool] -> MachineState ()
 handleStoreRegister inst = do
   baseR <- getGeneralRegisterContent' (toWord $ slice inst 6 8)
   sr <- getGeneralRegisterContent' (toWord $ slice inst 9 11)
-  let offset = toWord $ slice inst 0 5
+  let offset = signExtend (toWord $ slice inst 0 5) 6
   mem <- getMemory'
   setMemory' (baseR + offset) sr
 
 -- trap routines read/write to the IO stream
--- because this function is pure,
--- the effect is denoted by ""
 handleTrap :: [Bool] -> MachineState ()
 handleTrap inst = do
   let trapvect8 = toTrap $ slice inst 0 8
+  -- liftIO $ putStrLn "WITHIN TRAP"
+  -- liftIO $ print trapvect8
   executeTrap trapvect8
 
 toTrap :: [Bool] -> Trap
@@ -442,14 +473,15 @@ out = do
   -- perform bitwise AND operation
   let lower = i .&. lowerMask
       c = chr (fromIntegral lower)
-  liftIO $ print c
+  liftIO $ putChar c
 
 puts :: MachineState ()
 puts = do
   initialAddr <- getGeneralRegisterContent' 0
   mem <- getMemory'
-  let memSlice = extractChars $ slice mem initialAddr (fromIntegral $ length mem - 1)
-  liftIO $ forM_ memSlice print
+  let memSlice = extractChars $ slice mem (fromIntegral initialAddr) (fromIntegral $ length mem - 1)
+  liftIO $ putStrLn (fmap (chr . fromIntegral) memSlice)
+  liftIO (hFlush stdout)
   where
     extractChars = takeWhile (/= 0)
 
@@ -466,7 +498,7 @@ putsp :: MachineState ()
 putsp = do
   initialAddr <- getGeneralRegisterContent' 0
   mem <- getMemory'
-  let memSlice = extractChars $ slice mem initialAddr (fromIntegral $ length mem - 1)
+  let memSlice = extractChars $ slice mem (fromIntegral initialAddr) (fromIntegral $ length mem - 1)
   liftIO $ forM_ memSlice print
   where
     extractChars =
@@ -475,4 +507,6 @@ putsp = do
     splitWord word = [word .&. upperMask, word .&. lowerMask]
 
 -- kek
-halt = exitSuccess
+halt = do
+  liftIO $ putStrLn "halted"
+  liftIO exitSuccess
