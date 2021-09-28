@@ -29,7 +29,7 @@ library:
   source-dirs: src
 
 executables:
-  lc3-vm-exe:
+  lc3:
     main:                Main.hs
     source-dirs:         app
     ghc-options:

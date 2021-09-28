@@ -1,9 +1,12 @@
+{-# LANGUAGE Strict #-}
+
 module Machine where
 
 import Control.Monad.State.Lazy
 import Data.Bits (Bits (complement), shiftL, shiftR, testBit, (.&.))
 import qualified Data.ByteString as B
 import Data.Char (chr, ord)
+import Data.Functor ((<&>))
 import qualified Data.Vector as V
 import Data.Word (Word16, Word8)
 import GHC.Num (wordToInteger)
@@ -90,10 +93,7 @@ getMemory :: Machine -> Memory
 getMemory (Machine m _) = m
 
 getMemory' :: MachineState Memory
-getMemory' = do
-  machine <- get
-  let mem = getMemory machine
-  return mem
+getMemory' = get <&> getMemory
 
 getRegisters :: Machine -> Registers
 getRegisters (Machine _ r) = r
@@ -242,6 +242,7 @@ handleRawInst = do
   rawInst <- memRead (fromIntegral pc)
   let opCode = parseInst rawInst
   -- liftIO $ print opCode
+  -- dump
   incrementPc'
   handleInstruction opCode
 
