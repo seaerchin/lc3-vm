@@ -46,3 +46,11 @@ pub fn bit_slice(bits: u16, start: u16, end: u16) -> u16 {
 pub fn bit_at(bits: u16, idx: usize) -> bool {
     (bits >> idx & 1) == 1
 }
+
+// NOTE: This might bug when the msb is the 15th bit (range is [0, 15])
+pub fn zext(bits: u16, msb: u16) -> u16 {
+    // MSB denotes the most significant bit
+    // We set the bit to the left of that to 0 and pass this into sext
+    let flipped = bits & (0 << msb + 1);
+    sext(flipped, msb as u8 + 1)
+}

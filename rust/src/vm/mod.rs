@@ -1,3 +1,5 @@
+use crate::util::offset9;
+
 use super::{inst::Instruction, util};
 
 // These type aliases are exported for clarity when referring to instructions
@@ -12,7 +14,7 @@ pub struct cond_reg {
 }
 
 struct vm {
-    mem: [i32; 1 << 16],
+    mem: [u16; 1 << 16],
     pc: u16,
     reg: [u16; 1 << 3],
     cond_reg: cond_reg,
@@ -56,7 +58,7 @@ impl vm {
         };
     }
 
-    pub fn set_cc(mut self, result: i32) {
+    pub fn set_cc(self, result: u16) {
         if result > 0 {
             self.cond_reg.set_p();
         } else if result == 0 {
@@ -77,8 +79,17 @@ impl vm {
             Instruction::Br(cond, offset) => handle_br(self, cond, offset),
             Instruction::Jmp(reg_idx) => handle_jmp(self, reg_idx),
             Instruction::Ret => handle_ret(self),
-            Instruction::Jsr(_) => todo!(),
-            Instruction::Jsrr(_) => todo!(),
+            Instruction::Jsr(offset) => handle_jsr(self, offset),
+            Instruction::Jsrr(base) => handle_jsrr(self, base),
+            Instruction::Ld(dr, offset) => handle_ld(self, dr, offset),
+            Instruction::Ldi(dr, offset) => handle_ldi(self, dr, offset),
+            Instruction::Ldr(dr, base, offset) => handle_ldr(self, dr, base, offset),
+            Instruction::Lea(dr, offset) => handle_lea(self, dr, offset),
+            Instruction::Not(dr, sr) => handle_not(self, dr, sr),
+            Instruction::St(sr, offset) => handle_st(self, sr, offset),
+            Instruction::Sti(sr, offset) => handle_sti(self, sr, offset),
+            Instruction::Str(sr, base_r, offset) => handle_str(self, sr, base_r, offset),
+            Instruction::Trap(trap) => handle_trap(self, trap),
         }
     }
 }
@@ -121,4 +132,57 @@ fn handle_jsr(mut vm: vm, offset: u16) {
 fn handle_jsrr(mut vm: vm, base: u16) {
     vm.reg[7] = vm.pc;
     vm.pc = vm.reg[base as usize];
+}
+
+fn handle_ld(mut vm: vm, dr: u16, offset: u16) {
+    let addr = vm.pc + offset9(offset);
+    let value = vm.mem[addr as usize];
+    vm.reg[dr as usize] = value;
+    vm.set_cc(value)
+}
+
+fn handle_ldi(mut vm: vm, dr: u16, offset: u16) {
+    let base: usize = (vm.pc + offset9(offset)).into();
+    let initial_addr: usize = vm.mem[base].into();
+    let value = vm.mem[initial_addr];
+    vm.reg[dr as usize] = value;
+    vm.set_cc(value)
+}
+
+fn handle_ldr(mut vm: vm, dr: u16, base: u16, offset: u16) {
+    let base_addr = vm.reg[base as usize];
+    let value = vm.mem[(base_addr + util::offset6(offset)) as usize];
+    vm.reg[dr as usize] = value;
+    vm.set_cc(value);
+}
+
+fn handle_lea(mut vm: vm, dr: u16, offset: u16) {
+    let value = vm.pc + offset9(offset);
+    vm.reg[dr as usize] = value;
+    vm.set_cc(value)
+}
+
+fn handle_not(mut vm: vm, dr: u16, sr: u16) {
+    vm.reg[dr as usize] = !vm.reg[sr as usize];
+}
+
+fn handle_st(mut vm: vm, sr: u16, offset: u16) {
+    let base_addr: usize = (vm.pc + offset9(offset)).into();
+    vm.mem[base_addr] = vm.reg[sr as usize];
+}
+
+fn handle_sti(mut vm: vm, sr: u16, offset: u16) {
+    let base_addr: usize = (vm.pc + offset9(offset)).into();
+    let base_contents: usize = vm.mem[base_addr].into();
+    vm.mem[base_contents] = vm.reg[sr as usize];
+}
+
+fn handle_str(mut vm: vm, sr: u16, base_r: u16, offset: u16) {
+    let base: usize = (vm.reg[base_r as usize] + util::offset6(offset)).into();
+    vm.mem[base] = vm.reg[sr as usize];
+}
+
+fn handle_trap(mut vm: vm, trap: u16) {
+    vm.reg[7] = vm.pc;
+    vm.pc = vm.mem[util::zext(trap, 7) as usize];
 }
