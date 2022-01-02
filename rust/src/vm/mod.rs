@@ -193,10 +193,10 @@ fn handle_trap(mut vm: vm, trap: u16) {
     vm.reg[7] = vm.pc;
     match trap {
         0x20 => getc(vm),
-        0x21 => out(),
-        0x22 => puts(),
-        0x23 => inn(),
-        0x24 => putsp(),
+        0x21 => out(vm),
+        0x22 => puts(vm),
+        0x23 => inn(vm),
+        0x24 => putsp(vm),
         0x25 => halt(),
         _ => panic!("this trap instruction doesn't exist"),
     }
@@ -210,7 +210,7 @@ fn getc(mut vm: vm) {
             if let Ok(char) = read_kbd_event() {
                 let mut buffer = [0; 1];
                 let encoded_char = char.encode_utf8(&mut buffer);
-                vm.reg[0] = encoded_char[0]
+                vm.reg[0] = encoded_char.chars().nth(0).unwrap() as u16;
             }
         }
         // abort early; don't retry as the error might be something on the user's part
@@ -237,4 +237,45 @@ fn out(mut vm: vm) {
     let base = vm.reg[0];
     let new = (base & 0xFF) as u8 as char;
     println!("{}", new)
+}
+
+fn puts(mut vm: vm) {
+    let initial_addr = vm.reg[0];
+    let mut offset = 0;
+    while vm.mem[(initial_addr + offset) as usize] != 0x0000 {
+        print!("{}", vm.mem[(initial_addr + offset) as usize]);
+        offset += 1;
+    }
+}
+
+fn inn(mut vm: vm) {
+    println!("please enter a single character");
+    match read_kbd_event() {
+        Ok(c) => {
+            println!("{}", c);
+            vm.reg[0] = c as u16;
+        }
+        Err(e) => panic!("we dun goofed: {}", e),
+    }
+}
+
+fn putsp(mut vm: vm) {
+    let initial_addr = vm.reg[0];
+    let mut offset = 0;
+    while vm.mem[(initial_addr + offset) as usize] != 0x0000 {
+        let combined = vm.mem[(initial_addr + offset) as usize];
+        let lower = (combined & 0x00FF) as u8;
+        let upper = (combined & 0xFF00) as u8;
+        print!("{}", lower);
+        // if odd number of characters, the character at bits [15, 8] will be 0x00
+        if upper != 0x00 {
+            print!("{}", upper);
+        }
+        offset += 1;
+    }
+}
+
+fn halt() {
+    println!("program halted! exiting now...");
+    std::process::exit(0)
 }
