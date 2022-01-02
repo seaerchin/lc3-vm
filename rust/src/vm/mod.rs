@@ -14,41 +14,44 @@ pub type dr = u16;
 pub type sr = u16;
 pub type imm = u16;
 
-pub struct cond_reg {
+const MR_KBSR: u16 = 0xFE00;
+const MR_KBDR: u16 = 0xFE02;
+
+pub struct CondReg {
     n: bool,
     z: bool,
     p: bool,
 }
 
-struct vm {
+pub struct vm {
     mem: [u16; 1 << 16],
     pc: u16,
     reg: [u16; 1 << 3],
-    cond_reg: cond_reg,
+    cond_reg: CondReg,
 }
 
-impl cond_reg {
-    fn new() -> cond_reg {
-        cond_reg {
+impl CondReg {
+    fn new() -> CondReg {
+        CondReg {
             n: false,
             z: false,
             p: false,
         }
     }
 
-    fn set_n(mut self) {
+    fn set_n(&mut self) {
         self.n = true;
         self.z = false;
         self.p = false
     }
 
-    fn set_z(mut self) {
+    fn set_z(&mut self) {
         self.z = true;
         self.p = false;
         self.n = false
     }
 
-    fn set_p(mut self) {
+    fn set_p(&mut self) {
         self.p = true;
         self.z = false;
         self.n = false
@@ -61,11 +64,11 @@ impl vm {
             mem: [0; 1 << 16],
             pc: 0,
             reg: [0; 1 << 3],
-            cond_reg: cond_reg::new(),
+            cond_reg: CondReg::new(),
         };
     }
 
-    pub fn set_cc(self, result: u16) {
+    pub fn set_cc(&mut self, result: u16) {
         if result > 0 {
             self.cond_reg.set_p();
         } else if result == 0 {
@@ -75,7 +78,7 @@ impl vm {
         }
     }
 
-    pub fn handle_inst(mut self, inst: Instruction) {
+    pub fn handle_inst(&mut self, inst: Instruction) {
         // we increment the pc first before executing any instructions
         self.pc += 1;
         match inst {
@@ -101,54 +104,54 @@ impl vm {
     }
 }
 
-fn handle_add(mut vm: vm, dest: u16, source1: u16, source2: u16) {
+fn handle_add(vm: &mut vm, dest: u16, source1: u16, source2: u16) {
     vm.reg[dest as usize] = vm.reg[source1 as usize] + vm.reg[source2 as usize]
 }
 
-fn handle_add_imm(mut vm: vm, dest: u16, src: u16, imm: u16) {
+fn handle_add_imm(mut vm: &mut vm, dest: u16, src: u16, imm: u16) {
     vm.reg[dest as usize] = vm.reg[src as usize] + util::imm5(imm);
 }
 
-fn handle_and(mut vm: vm, dest: u16, src1: u16, src2: u16) {
+fn handle_and(mut vm: &mut vm, dest: u16, src1: u16, src2: u16) {
     vm.reg[dest as usize] = vm.reg[src1 as usize] & vm.reg[src2 as usize];
 }
 
-fn handle_and_imm(mut vm: vm, dest: u16, src: u16, imm: u16) {
+fn handle_and_imm(mut vm: &mut vm, dest: u16, src: u16, imm: u16) {
     vm.reg[dest as usize] = vm.reg[src as usize] & util::imm5(imm);
 }
 
-fn handle_br(mut vm: vm, cond_reg { n, z, p }: cond_reg, offset: u16) {
+fn handle_br(mut vm: &mut vm, CondReg { n, z, p }: CondReg, offset: u16) {
     if n && vm.cond_reg.n || z && vm.cond_reg.z || p && vm.cond_reg.p {
         vm.pc += util::offset9(offset)
     }
 }
 
-fn handle_jmp(mut vm: vm, reg_idx: u16) {
+fn handle_jmp(mut vm: &mut vm, reg_idx: u16) {
     vm.pc = vm.reg[reg_idx as usize]
 }
 
-fn handle_ret(mut vm: vm) {
+fn handle_ret(mut vm: &mut vm) {
     vm.pc = vm.reg[7];
 }
 
-fn handle_jsr(mut vm: vm, offset: u16) {
+fn handle_jsr(mut vm: &mut vm, offset: u16) {
     vm.reg[7] = vm.pc;
     vm.pc = vm.pc + util::offset11(offset);
 }
 
-fn handle_jsrr(mut vm: vm, base: u16) {
+fn handle_jsrr(mut vm: &mut vm, base: u16) {
     vm.reg[7] = vm.pc;
     vm.pc = vm.reg[base as usize];
 }
 
-fn handle_ld(mut vm: vm, dr: u16, offset: u16) {
+fn handle_ld(vm: &mut vm, dr: u16, offset: u16) {
     let addr = vm.pc + offset9(offset);
     let value = vm.mem[addr as usize];
     vm.reg[dr as usize] = value;
     vm.set_cc(value)
 }
 
-fn handle_ldi(mut vm: vm, dr: u16, offset: u16) {
+fn handle_ldi(mut vm: &mut vm, dr: u16, offset: u16) {
     let base: usize = (vm.pc + offset9(offset)).into();
     let initial_addr: usize = vm.mem[base].into();
     let value = vm.mem[initial_addr];
@@ -156,40 +159,40 @@ fn handle_ldi(mut vm: vm, dr: u16, offset: u16) {
     vm.set_cc(value)
 }
 
-fn handle_ldr(mut vm: vm, dr: u16, base: u16, offset: u16) {
+fn handle_ldr(mut vm: &mut vm, dr: u16, base: u16, offset: u16) {
     let base_addr = vm.reg[base as usize];
     let value = vm.mem[(base_addr + util::offset6(offset)) as usize];
     vm.reg[dr as usize] = value;
     vm.set_cc(value);
 }
 
-fn handle_lea(mut vm: vm, dr: u16, offset: u16) {
+fn handle_lea(mut vm: &mut vm, dr: u16, offset: u16) {
     let value = vm.pc + offset9(offset);
     vm.reg[dr as usize] = value;
     vm.set_cc(value)
 }
 
-fn handle_not(mut vm: vm, dr: u16, sr: u16) {
+fn handle_not(mut vm: &mut vm, dr: u16, sr: u16) {
     vm.reg[dr as usize] = !vm.reg[sr as usize];
 }
 
-fn handle_st(mut vm: vm, sr: u16, offset: u16) {
+fn handle_st(mut vm: &mut vm, sr: u16, offset: u16) {
     let base_addr: usize = (vm.pc + offset9(offset)).into();
     vm.mem[base_addr] = vm.reg[sr as usize];
 }
 
-fn handle_sti(mut vm: vm, sr: u16, offset: u16) {
+fn handle_sti(mut vm: &mut vm, sr: u16, offset: u16) {
     let base_addr: usize = (vm.pc + offset9(offset)).into();
     let base_contents: usize = vm.mem[base_addr].into();
     vm.mem[base_contents] = vm.reg[sr as usize];
 }
 
-fn handle_str(mut vm: vm, sr: u16, base_r: u16, offset: u16) {
+fn handle_str(mut vm: &mut vm, sr: u16, base_r: u16, offset: u16) {
     let base: usize = (vm.reg[base_r as usize] + util::offset6(offset)).into();
     vm.mem[base] = vm.reg[sr as usize];
 }
 
-fn handle_trap(mut vm: vm, trap: u16) {
+fn handle_trap(mut vm: &mut vm, trap: u16) {
     vm.reg[7] = vm.pc;
     match trap {
         0x20 => getc(vm),
@@ -204,7 +207,7 @@ fn handle_trap(mut vm: vm, trap: u16) {
 
 // we enable raw mode to prevent line buffering and read from stdin immediately
 // upon exit, we disable raw mode
-fn getc(mut vm: vm) {
+fn getc(vm: &mut vm) {
     match terminal::enable_raw_mode() {
         Ok(_) => {
             if let Ok(char) = read_kbd_event() {
@@ -233,13 +236,13 @@ fn read_kbd_event() -> Result<char> {
     }
 }
 
-fn out(mut vm: vm) {
+fn out(vm: &vm) {
     let base = vm.reg[0];
     let new = (base & 0xFF) as u8 as char;
     println!("{}", new)
 }
 
-fn puts(mut vm: vm) {
+fn puts(vm: &vm) {
     let initial_addr = vm.reg[0];
     let mut offset = 0;
     while vm.mem[(initial_addr + offset) as usize] != 0x0000 {
@@ -248,7 +251,7 @@ fn puts(mut vm: vm) {
     }
 }
 
-fn inn(mut vm: vm) {
+fn inn(mut vm: &mut vm) {
     println!("please enter a single character");
     match read_kbd_event() {
         Ok(c) => {
@@ -259,7 +262,7 @@ fn inn(mut vm: vm) {
     }
 }
 
-fn putsp(mut vm: vm) {
+fn putsp(vm: &vm) {
     let initial_addr = vm.reg[0];
     let mut offset = 0;
     while vm.mem[(initial_addr + offset) as usize] != 0x0000 {

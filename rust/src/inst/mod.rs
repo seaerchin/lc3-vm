@@ -5,7 +5,7 @@ pub enum Instruction {
     AddImm(vm::dr, vm::sr, vm::imm),
     And(vm::dr, vm::sr, vm::sr),
     AndImm(vm::dr, vm::sr, vm::imm),
-    Br(vm::cond_reg, vm::sr),
+    Br(vm::CondReg, vm::sr),
     Jmp(vm::sr),
     Ret,
     Jsr(vm::sr),
