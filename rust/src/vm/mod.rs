@@ -1,4 +1,11 @@
+use std::error::Error;
+
 use crate::util::offset9;
+use crossterm::Result;
+use crossterm::{
+    event::{self, read, KeyEvent},
+    terminal,
+};
 
 use super::{inst::Instruction, util};
 
@@ -184,5 +191,50 @@ fn handle_str(mut vm: vm, sr: u16, base_r: u16, offset: u16) {
 
 fn handle_trap(mut vm: vm, trap: u16) {
     vm.reg[7] = vm.pc;
-    vm.pc = vm.mem[util::zext(trap, 7) as usize];
+    match trap {
+        0x20 => getc(vm),
+        0x21 => out(),
+        0x22 => puts(),
+        0x23 => inn(),
+        0x24 => putsp(),
+        0x25 => halt(),
+        _ => panic!("this trap instruction doesn't exist"),
+    }
+}
+
+// we enable raw mode to prevent line buffering and read from stdin immediately
+// upon exit, we disable raw mode
+fn getc(mut vm: vm) {
+    match terminal::enable_raw_mode() {
+        Ok(_) => {
+            if let Ok(char) = read_kbd_event() {
+                let mut buffer = [0; 1];
+                let encoded_char = char.encode_utf8(&mut buffer);
+                vm.reg[0] = encoded_char[0]
+            }
+        }
+        // abort early; don't retry as the error might be something on the user's part
+        Err(e) => println!("Unable to read character from input due to error: {}", e),
+    }
+}
+
+// recursively read until we get a keyboard event or we error
+fn read_kbd_event() -> Result<char> {
+    match read() {
+        Ok(e) => match e {
+            event::Event::Key(k) => match k.code {
+                event::KeyCode::Char(c) => Ok(c),
+                _ => read_kbd_event(),
+            },
+            event::Event::Mouse(_) => read_kbd_event(),
+            event::Event::Resize(_, _) => read_kbd_event(),
+        },
+        Err(e) => Err(e),
+    }
+}
+
+fn out(mut vm: vm) {
+    let base = vm.reg[0];
+    let new = (base & 0xFF) as u8 as char;
+    println!("{}", new)
 }
