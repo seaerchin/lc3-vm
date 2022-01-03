@@ -49,7 +49,7 @@ pub fn bit_slice(bits: u16, start: u16, end: u16) -> u16 {
 }
 
 pub fn bit_at(bits: u16, idx: usize) -> bool {
-    (bits >> idx & 1) == 1
+    (bits >> idx & 1) != 0
 }
 
 // NOTE: This might bug when the msb is the 15th bit (range is [0, 15])

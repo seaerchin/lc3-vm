@@ -41,6 +41,10 @@ impl CondReg {
         }
     }
 
+    pub fn from_bits(n: bool, z: bool, p: bool) -> CondReg {
+        CondReg { n, z, p }
+    }
+
     fn set_n(&mut self) {
         self.n = true;
         self.z = false;
@@ -145,7 +149,7 @@ fn handle_add(vm: &mut vm, dest: u16, source1: u16, source2: u16) {
 }
 
 fn handle_add_imm(mut vm: &mut vm, dest: u16, src: u16, imm: u16) {
-    vm.reg[dest as usize] = vm.reg[src as usize] + util::imm5(imm);
+    vm.reg[dest as usize] = vm.reg[src as usize] + imm;
 }
 
 fn handle_and(mut vm: &mut vm, dest: u16, src1: u16, src2: u16) {
@@ -153,12 +157,12 @@ fn handle_and(mut vm: &mut vm, dest: u16, src1: u16, src2: u16) {
 }
 
 fn handle_and_imm(mut vm: &mut vm, dest: u16, src: u16, imm: u16) {
-    vm.reg[dest as usize] = vm.reg[src as usize] & util::imm5(imm);
+    vm.reg[dest as usize] = vm.reg[src as usize] & imm;
 }
 
 fn handle_br(mut vm: &mut vm, CondReg { n, z, p }: CondReg, offset: u16) {
     if n && vm.cond_reg.n || z && vm.cond_reg.z || p && vm.cond_reg.p {
-        vm.pc += util::offset9(offset)
+        vm.pc += offset
     }
 }
 
@@ -172,7 +176,7 @@ fn handle_ret(mut vm: &mut vm) {
 
 fn handle_jsr(mut vm: &mut vm, offset: u16) {
     vm.reg[7] = vm.pc;
-    vm.pc = vm.pc + util::offset11(offset);
+    vm.pc = vm.pc + offset;
 }
 
 fn handle_jsrr(mut vm: &mut vm, base: u16) {
@@ -181,14 +185,14 @@ fn handle_jsrr(mut vm: &mut vm, base: u16) {
 }
 
 fn handle_ld(vm: &mut vm, dr: u16, offset: u16) {
-    let addr = vm.pc + offset9(offset);
+    let addr = vm.pc + offset;
     let value = vm.mem[addr as usize];
     vm.reg[dr as usize] = value;
     vm.set_cc(value)
 }
 
 fn handle_ldi(mut vm: &mut vm, dr: u16, offset: u16) {
-    let base: usize = (vm.pc + offset9(offset)).into();
+    let base: usize = (vm.pc + offset).into();
     let initial_addr: usize = vm.mem[base].into();
     let value = vm.mem[initial_addr];
     vm.reg[dr as usize] = value;
@@ -197,13 +201,13 @@ fn handle_ldi(mut vm: &mut vm, dr: u16, offset: u16) {
 
 fn handle_ldr(mut vm: &mut vm, dr: u16, base: u16, offset: u16) {
     let base_addr = vm.reg[base as usize];
-    let value = vm.mem[(base_addr + util::offset6(offset)) as usize];
+    let value = vm.mem[(base_addr + offset) as usize];
     vm.reg[dr as usize] = value;
     vm.set_cc(value);
 }
 
 fn handle_lea(mut vm: &mut vm, dr: u16, offset: u16) {
-    let value = vm.pc + offset9(offset);
+    let value = vm.pc + offset;
     vm.reg[dr as usize] = value;
     vm.set_cc(value)
 }
@@ -213,18 +217,18 @@ fn handle_not(mut vm: &mut vm, dr: u16, sr: u16) {
 }
 
 fn handle_st(mut vm: &mut vm, sr: u16, offset: u16) {
-    let base_addr: usize = (vm.pc + offset9(offset)).into();
+    let base_addr: usize = (vm.pc + offset).into();
     vm.mem[base_addr] = vm.reg[sr as usize];
 }
 
 fn handle_sti(mut vm: &mut vm, sr: u16, offset: u16) {
-    let base_addr: usize = (vm.pc + offset9(offset)).into();
+    let base_addr: usize = (vm.pc + offset).into();
     let base_contents: usize = vm.mem[base_addr].into();
     vm.mem[base_contents] = vm.reg[sr as usize];
 }
 
 fn handle_str(mut vm: &mut vm, sr: u16, base_r: u16, offset: u16) {
-    let base: usize = (vm.reg[base_r as usize] + util::offset6(offset)).into();
+    let base: usize = (vm.reg[base_r as usize] + offset).into();
     vm.mem[base] = vm.reg[sr as usize];
 }
 
