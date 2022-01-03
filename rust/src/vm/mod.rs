@@ -1,7 +1,8 @@
 use std::error::Error;
 use std::io::Read;
 
-use crate::util::offset9;
+use super::inst;
+use super::util::offset9;
 use crossterm::Result;
 use crossterm::{
     event::{self, read},
@@ -69,6 +70,11 @@ impl vm {
         };
     }
 
+    pub fn run(&mut self) {
+        let cur_inst = self.mem[self.pc as usize];
+        self.handle_inst(inst::parse(cur_inst));
+    }
+
     pub fn from_file(&mut self, insts: Vec<u16>, origin: u16) {
         self.pc = origin;
         for (idx, inst) in insts.iter().enumerate() {
@@ -108,7 +114,7 @@ impl vm {
         self.mem[addr as usize]
     }
 
-    pub fn handle_inst(&mut self, inst: Instruction) {
+    fn handle_inst(&mut self, inst: Instruction) {
         // we increment the pc first before executing any instructions
         self.pc += 1;
         match inst {
