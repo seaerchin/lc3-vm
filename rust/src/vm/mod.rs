@@ -1,9 +1,10 @@
 use std::error::Error;
+use std::io::Read;
 
 use crate::util::offset9;
 use crossterm::Result;
 use crossterm::{
-    event::{self, read, KeyEvent},
+    event::{self, read},
     terminal,
 };
 
@@ -76,6 +77,28 @@ impl vm {
         } else {
             self.cond_reg.set_n();
         }
+    }
+
+    pub fn mem_write(&mut self) {
+        todo!()
+    }
+
+    fn handle_keyboard(&mut self) {
+        let mut buffer = [0; 1];
+        std::io::stdin().read_exact(&mut buffer).unwrap();
+        if buffer[0] != 0 {
+            self.mem[MR_KBSR as usize] = 1 << 15;
+            self.mem[MR_KBDR as usize] = buffer[0] as u16;
+        } else {
+            self.mem[MR_KBSR as usize] = 0
+        }
+    }
+
+    pub fn mem_read(&mut self, addr: u16) -> u16 {
+        if addr == MR_KBSR as u16 {
+            self.handle_keyboard();
+        }
+        self.mem[addr as usize]
     }
 
     pub fn handle_inst(&mut self, inst: Instruction) {
