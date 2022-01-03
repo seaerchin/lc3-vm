@@ -30,3 +30,11 @@ fn test_bit_at() {
     assert_eq!(util::bit_at(base, 5), true);
     assert_eq!(util::bit_at(base, 4), false);
 }
+
+#[test]
+fn test_bit_slice() {
+    let base = 0b1011_1011;
+    let expected = 0b1110;
+    let actual = util::bit_slice(base, 2, 6);
+    assert_eq!(expected, actual)
+}
