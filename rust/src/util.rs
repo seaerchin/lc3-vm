@@ -1,3 +1,8 @@
+use std::io::{BufReader, Read};
+use std::{error::Error, fs::File};
+
+use byteorder::{BigEndian, ReadBytesExt};
+
 // sign extends i to 16 bits using the digit at msb_pos
 pub fn sext(i: u16, msb_pos: u8) -> u16 {
     let mut digit = 0;
@@ -53,4 +58,20 @@ pub fn zext(bits: u16, msb: u16) -> u16 {
     // We set the bit to the left of that to 0 and pass this into sext
     let flipped = bits & (0 << msb + 1);
     sext(flipped, msb as u8 + 1)
+}
+
+pub fn read_u16<T: Read>(mut reader: BufReader<T>) -> Result<Vec<u16>, Box<dyn Error>> {
+    let mut buffer: Vec<u16> = Vec::new();
+    loop {
+        match reader.read_u16::<BigEndian>() {
+            Ok(i) => buffer.push(i),
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    return Ok(buffer);
+                } else {
+                    return Err(Box::new(e));
+                }
+            }
+        }
+    }
 }

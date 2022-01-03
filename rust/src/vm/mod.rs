@@ -69,6 +69,13 @@ impl vm {
         };
     }
 
+    pub fn from_file(&mut self, insts: Vec<u16>, origin: u16) {
+        self.pc = origin;
+        for (idx, inst) in insts.iter().enumerate() {
+            self.mem[idx] = *inst
+        }
+    }
+
     pub fn set_cc(&mut self, result: u16) {
         if result > 0 {
             self.cond_reg.set_p();

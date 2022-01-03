@@ -1,4 +1,4 @@
 pub mod inst;
 mod test;
-mod util;
+pub mod util;
 pub mod vm;
