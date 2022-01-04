@@ -2,6 +2,7 @@ use super::util;
 use super::vm;
 use crate::util::{bit_at, bit_slice, imm5, offset11, offset6, offset9};
 
+#[derive(Debug)]
 pub enum Instruction {
     Add(vm::dr, vm::sr, vm::sr),
     AddImm(vm::dr, vm::sr, vm::imm),

@@ -75,3 +75,8 @@ pub fn read_u16<T: Read>(mut reader: BufReader<T>) -> Result<Vec<u16>, Box<dyn E
         }
     }
 }
+
+pub fn overflowing_add(a: u16, b: u16) -> u16 {
+    let (res, _) = a.overflowing_add(b);
+    res
+}

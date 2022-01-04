@@ -1,15 +1,17 @@
-use std::error::Error;
+use crate::util::overflowing_add;
+use std::fmt;
+use std::fmt::{Debug, Formatter};
 use std::io::Read;
+use std::result;
 
 use super::inst;
-use super::util::offset9;
 use crossterm::Result;
 use crossterm::{
     event::{self, read},
     terminal,
 };
 
-use super::{inst::Instruction, util};
+use super::inst::Instruction;
 
 // These type aliases are exported for clarity when referring to instructions
 pub type dr = u16;
@@ -23,6 +25,12 @@ pub struct CondReg {
     n: bool,
     z: bool,
     p: bool,
+}
+
+impl Debug for CondReg {
+    fn fmt(&self, _: &mut Formatter<'_>) -> result::Result<(), fmt::Error> {
+        Ok(println!("{}, {}, {}", self.n, self.z, self.p))
+    }
 }
 
 pub struct vm {
@@ -82,7 +90,7 @@ impl vm {
     pub fn from_file(&mut self, insts: Vec<u16>, origin: u16) {
         self.pc = origin;
         for (idx, inst) in insts.iter().enumerate() {
-            self.mem[idx] = *inst
+            self.mem[overflowing_add(origin, idx as u16) as usize] = *inst
         }
     }
 
@@ -120,7 +128,8 @@ impl vm {
 
     fn handle_inst(&mut self, inst: Instruction) {
         // we increment the pc first before executing any instructions
-        self.pc += 1;
+        let (new, _) = self.pc.overflowing_add(1);
+        self.pc = new;
         match inst {
             Instruction::Add(dest, src1, src2) => handle_add(self, dest, src1, src2),
             Instruction::AddImm(dest, src, imm) => handle_add_imm(self, dest, src, imm),
@@ -145,11 +154,12 @@ impl vm {
 }
 
 fn handle_add(vm: &mut vm, dest: u16, source1: u16, source2: u16) {
-    vm.reg[dest as usize] = vm.reg[source1 as usize] + vm.reg[source2 as usize]
+    vm.reg[dest as usize] =
+        (vm.reg[source1 as usize] as u32 + vm.reg[source2 as usize] as u32) as u16
 }
 
 fn handle_add_imm(mut vm: &mut vm, dest: u16, src: u16, imm: u16) {
-    vm.reg[dest as usize] = vm.reg[src as usize] + imm;
+    vm.reg[dest as usize] = (vm.reg[src as usize] as u32 + imm as u32) as u16;
 }
 
 fn handle_and(mut vm: &mut vm, dest: u16, src1: u16, src2: u16) {
@@ -162,7 +172,7 @@ fn handle_and_imm(mut vm: &mut vm, dest: u16, src: u16, imm: u16) {
 
 fn handle_br(mut vm: &mut vm, CondReg { n, z, p }: CondReg, offset: u16) {
     if n && vm.cond_reg.n || z && vm.cond_reg.z || p && vm.cond_reg.p {
-        vm.pc += offset
+        vm.pc = overflowing_add(vm.pc, offset);
     }
 }
 
@@ -176,7 +186,7 @@ fn handle_ret(mut vm: &mut vm) {
 
 fn handle_jsr(mut vm: &mut vm, offset: u16) {
     vm.reg[7] = vm.pc;
-    vm.pc = vm.pc + offset;
+    vm.pc = overflowing_add(vm.pc, offset);
 }
 
 fn handle_jsrr(mut vm: &mut vm, base: u16) {
@@ -185,14 +195,14 @@ fn handle_jsrr(mut vm: &mut vm, base: u16) {
 }
 
 fn handle_ld(vm: &mut vm, dr: u16, offset: u16) {
-    let addr = vm.pc + offset;
+    let addr = overflowing_add(vm.pc, offset);
     let value = vm.mem[addr as usize];
     vm.reg[dr as usize] = value;
     vm.set_cc(value)
 }
 
 fn handle_ldi(mut vm: &mut vm, dr: u16, offset: u16) {
-    let base: usize = (vm.pc + offset).into();
+    let base: usize = overflowing_add(vm.pc, offset).into();
     let initial_addr: usize = vm.mem[base].into();
     let value = vm.mem[initial_addr];
     vm.reg[dr as usize] = value;
@@ -201,13 +211,13 @@ fn handle_ldi(mut vm: &mut vm, dr: u16, offset: u16) {
 
 fn handle_ldr(mut vm: &mut vm, dr: u16, base: u16, offset: u16) {
     let base_addr = vm.reg[base as usize];
-    let value = vm.mem[(base_addr + offset) as usize];
+    let value = vm.mem[overflowing_add(base_addr, offset) as usize];
     vm.reg[dr as usize] = value;
     vm.set_cc(value);
 }
 
 fn handle_lea(mut vm: &mut vm, dr: u16, offset: u16) {
-    let value = vm.pc + offset;
+    let value = overflowing_add(vm.pc, offset);
     vm.reg[dr as usize] = value;
     vm.set_cc(value)
 }
@@ -217,19 +227,19 @@ fn handle_not(mut vm: &mut vm, dr: u16, sr: u16) {
 }
 
 fn handle_st(mut vm: &mut vm, sr: u16, offset: u16) {
-    let base_addr: usize = (vm.pc + offset).into();
+    let base_addr: usize = overflowing_add(vm.pc, offset).into();
     vm.mem[base_addr] = vm.reg[sr as usize];
 }
 
 fn handle_sti(mut vm: &mut vm, sr: u16, offset: u16) {
-    let base_addr: usize = (vm.pc + offset).into();
+    let base_addr: usize = overflowing_add(vm.pc, offset).into();
     let base_contents: usize = vm.mem[base_addr].into();
     vm.mem[base_contents] = vm.reg[sr as usize];
 }
 
 fn handle_str(mut vm: &mut vm, sr: u16, base_r: u16, offset: u16) {
-    let base: usize = (vm.reg[base_r as usize] + offset).into();
-    vm.mem[base] = vm.reg[sr as usize];
+    let base: u32 = vm.reg[base_r as usize] as u32 + offset as u32;
+    vm.mem[base as u16 as usize] = vm.reg[sr as usize];
 }
 
 fn handle_trap(mut vm: &mut vm, trap: u16) {
@@ -283,11 +293,10 @@ fn out(vm: &vm) {
 }
 
 fn puts(vm: &vm) {
-    let initial_addr = vm.reg[0];
-    let mut offset = 0;
-    while vm.mem[(initial_addr + offset) as usize] != 0x0000 {
-        print!("{}", vm.mem[(initial_addr + offset) as usize]);
-        offset += 1;
+    let mut addr = vm.reg[0];
+    while vm.mem[addr as usize] != 0x0000 {
+        print!("{}", vm.mem[addr as usize] as u8 as char);
+        addr = overflowing_add(addr, 1);
     }
 }
 
@@ -303,18 +312,16 @@ fn inn(mut vm: &mut vm) {
 }
 
 fn putsp(vm: &vm) {
-    let initial_addr = vm.reg[0];
-    let mut offset = 0;
-    while vm.mem[(initial_addr + offset) as usize] != 0x0000 {
-        let combined = vm.mem[(initial_addr + offset) as usize];
-        let lower = (combined & 0x00FF) as u8;
-        let upper = (combined & 0xFF00) as u8;
-        print!("{}", lower);
+    let mut addr = vm.reg[0];
+    while vm.mem[addr as usize] != 0x0000 {
+        let lower = (addr & 0x00FF) as u8;
+        let upper = (addr & 0xFF00) as u8;
+        print!("{}", lower as char);
         // if odd number of characters, the character at bits [15, 8] will be 0x00
         if upper != 0x00 {
-            print!("{}", upper);
+            print!("{}", upper as char);
         }
-        offset += 1;
+        addr = overflowing_add(addr, 1);
     }
 }
 

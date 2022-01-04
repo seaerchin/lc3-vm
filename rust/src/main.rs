@@ -5,7 +5,6 @@ use rust::vm;
 use std::{fs::File, io::BufReader};
 
 fn main() {
-    println!("Hello, world!");
     let mut vm = vm::vm::new();
     let f = File::open("../2048.obj").expect("couldn't open or find file");
     let mut f = BufReader::new(f);
