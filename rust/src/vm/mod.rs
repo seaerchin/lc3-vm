@@ -96,12 +96,12 @@ impl vm {
     }
 
     pub fn set_cc(&mut self, result: u16) {
-        if result > 0 {
-            self.cond_reg.set_p();
+        if result >> 15 != 0 {
+            self.cond_reg.set_n();
         } else if result == 0 {
             self.cond_reg.set_z();
         } else {
-            self.cond_reg.set_n();
+            self.cond_reg.set_p();
         }
     }
 
@@ -112,13 +112,8 @@ impl vm {
     fn handle_keyboard(&mut self) {
         match read_kbd_event() {
             Some(c) => {
-                println!("CHAR: {}", c);
                 self.mem[MR_KBSR as usize] = 1 << 15;
                 self.mem[MR_KBDR as usize] = c as u16;
-                println!(
-                    "KBSR: {}, KBDR: {:#?}",
-                    self.mem[MR_KBSR as usize], self.mem[MR_KBDR as usize]
-                );
             }
             None => self.mem[MR_KBSR as usize] = 0,
         }
@@ -126,7 +121,6 @@ impl vm {
 
     pub fn mem_read(&mut self, addr: u16) -> u16 {
         if addr == MR_KBSR {
-            println!("I AM HERE");
             self.handle_keyboard();
         }
         self.mem[addr as usize]
@@ -136,8 +130,6 @@ impl vm {
         // we increment the pc first before executing any instructions
         let (new, _) = self.pc.overflowing_add(1);
         self.pc = new;
-        println!("INSTRUCTION: {:?}", inst);
-        thread::sleep(time::Duration::from_secs(1));
         match inst {
             Instruction::Add(dest, src1, src2) => handle_add(self, dest, src1, src2),
             Instruction::AddImm(dest, src, imm) => handle_add_imm(self, dest, src, imm),
@@ -162,20 +154,27 @@ impl vm {
 }
 
 fn handle_add(vm: &mut vm, dest: u16, source1: u16, source2: u16) {
-    vm.reg[dest as usize] =
-        (vm.reg[source1 as usize] as u32 + vm.reg[source2 as usize] as u32) as u16
+    let result = (vm.reg[source1 as usize] as u32 + vm.reg[source2 as usize] as u32) as u16;
+    vm.reg[dest as usize] = result;
+    vm.set_cc(result)
 }
 
 fn handle_add_imm(mut vm: &mut vm, dest: u16, src: u16, imm: u16) {
-    vm.reg[dest as usize] = (vm.reg[src as usize] as u32 + imm as u32) as u16;
+    let result = (vm.reg[src as usize] as u32 + imm as u32) as u16;
+    vm.reg[dest as usize] = result;
+    vm.set_cc(result)
 }
 
 fn handle_and(mut vm: &mut vm, dest: u16, src1: u16, src2: u16) {
-    vm.reg[dest as usize] = vm.reg[src1 as usize] & vm.reg[src2 as usize];
+    let result = vm.reg[src1 as usize] & vm.reg[src2 as usize];
+    vm.reg[dest as usize] = result;
+    vm.set_cc(result);
 }
 
 fn handle_and_imm(mut vm: &mut vm, dest: u16, src: u16, imm: u16) {
-    vm.reg[dest as usize] = vm.reg[src as usize] & imm;
+    let result = vm.reg[src as usize] & imm;
+    vm.reg[dest as usize] = result;
+    vm.set_cc(result);
 }
 
 fn handle_br(mut vm: &mut vm, CondReg { n, z, p }: CondReg, offset: u16) {
@@ -231,7 +230,9 @@ fn handle_lea(mut vm: &mut vm, dr: u16, offset: u16) {
 }
 
 fn handle_not(mut vm: &mut vm, dr: u16, sr: u16) {
-    vm.reg[dr as usize] = !vm.reg[sr as usize];
+    let result = !vm.reg[sr as usize];
+    vm.reg[dr as usize] = result;
+    vm.set_cc(result);
 }
 
 fn handle_st(mut vm: &mut vm, sr: u16, offset: u16) {
@@ -295,7 +296,7 @@ fn read_kbd_event() -> Option<char> {
 fn out(vm: &vm) {
     let base = vm.reg[0];
     let new = (base & 0xFF) as u8 as char;
-    println!("{}", new)
+    print!("{}", new)
 }
 
 fn puts(vm: &mut vm) {
@@ -311,7 +312,7 @@ fn inn(mut vm: &mut vm) {
     println!("please enter a single character");
     match read_kbd_event() {
         Some(c) => {
-            println!("{}", c);
+            print!("{}", c);
             vm.reg[0] = c as u16;
         }
         None => panic!("we dun goofed"),
