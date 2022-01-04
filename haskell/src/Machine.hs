@@ -481,7 +481,7 @@ puts = do
   initialAddr <- getGeneralRegisterContent' 0
   mem <- getMemory'
   let memSlice = extractChars $ slice mem (fromIntegral initialAddr) (fromIntegral $ length mem - 1)
-  liftIO $ putStrLn (fmap (chr . fromIntegral) memSlice)
+  liftIO $ putStr (fmap (chr . fromIntegral) memSlice)
   liftIO (hFlush stdout)
   where
     extractChars = takeWhile (/= 0)
