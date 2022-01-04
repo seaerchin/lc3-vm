@@ -1,8 +1,9 @@
 use crate::util::overflowing_add;
-use std::fmt;
+use core::time;
 use std::fmt::{Debug, Formatter};
-use std::io::Read;
+use std::io::{self, Read, Write};
 use std::result;
+use std::{fmt, thread};
 
 use super::inst;
 use crossterm::Result;
@@ -83,7 +84,7 @@ impl vm {
     }
 
     pub fn run(&mut self) {
-        let cur_inst = self.mem[self.pc as usize];
+        let cur_inst = self.mem_read(self.pc);
         self.handle_inst(inst::parse(cur_inst));
     }
 
@@ -109,18 +110,23 @@ impl vm {
     }
 
     fn handle_keyboard(&mut self) {
-        let mut buffer = [0; 1];
-        std::io::stdin().read_exact(&mut buffer).unwrap();
-        if buffer[0] != 0 {
-            self.mem[MR_KBSR as usize] = 1 << 15;
-            self.mem[MR_KBDR as usize] = buffer[0] as u16;
-        } else {
-            self.mem[MR_KBSR as usize] = 0
+        match read_kbd_event() {
+            Some(c) => {
+                println!("CHAR: {}", c);
+                self.mem[MR_KBSR as usize] = 1 << 15;
+                self.mem[MR_KBDR as usize] = c as u16;
+                println!(
+                    "KBSR: {}, KBDR: {:#?}",
+                    self.mem[MR_KBSR as usize], self.mem[MR_KBDR as usize]
+                );
+            }
+            None => self.mem[MR_KBSR as usize] = 0,
         }
     }
 
     pub fn mem_read(&mut self, addr: u16) -> u16 {
-        if addr == MR_KBSR as u16 {
+        if addr == MR_KBSR {
+            println!("I AM HERE");
             self.handle_keyboard();
         }
         self.mem[addr as usize]
@@ -130,6 +136,8 @@ impl vm {
         // we increment the pc first before executing any instructions
         let (new, _) = self.pc.overflowing_add(1);
         self.pc = new;
+        println!("INSTRUCTION: {:?}", inst);
+        thread::sleep(time::Duration::from_secs(1));
         match inst {
             Instruction::Add(dest, src1, src2) => handle_add(self, dest, src1, src2),
             Instruction::AddImm(dest, src, imm) => handle_add_imm(self, dest, src, imm),
@@ -196,22 +204,22 @@ fn handle_jsrr(mut vm: &mut vm, base: u16) {
 
 fn handle_ld(vm: &mut vm, dr: u16, offset: u16) {
     let addr = overflowing_add(vm.pc, offset);
-    let value = vm.mem[addr as usize];
+    let value = vm.mem_read(addr);
     vm.reg[dr as usize] = value;
     vm.set_cc(value)
 }
 
 fn handle_ldi(mut vm: &mut vm, dr: u16, offset: u16) {
-    let base: usize = overflowing_add(vm.pc, offset).into();
-    let initial_addr: usize = vm.mem[base].into();
-    let value = vm.mem[initial_addr];
+    let base = overflowing_add(vm.pc, offset);
+    let initial_addr = vm.mem_read(base);
+    let value = vm.mem_read(initial_addr);
     vm.reg[dr as usize] = value;
     vm.set_cc(value)
 }
 
 fn handle_ldr(mut vm: &mut vm, dr: u16, base: u16, offset: u16) {
     let base_addr = vm.reg[base as usize];
-    let value = vm.mem[overflowing_add(base_addr, offset) as usize];
+    let value = vm.mem_read(overflowing_add(base_addr, offset));
     vm.reg[dr as usize] = value;
     vm.set_cc(value);
 }
@@ -232,9 +240,9 @@ fn handle_st(mut vm: &mut vm, sr: u16, offset: u16) {
 }
 
 fn handle_sti(mut vm: &mut vm, sr: u16, offset: u16) {
-    let base_addr: usize = overflowing_add(vm.pc, offset).into();
-    let base_contents: usize = vm.mem[base_addr].into();
-    vm.mem[base_contents] = vm.reg[sr as usize];
+    let base_addr = overflowing_add(vm.pc, offset);
+    let base_contents = vm.mem_read(base_addr);
+    vm.mem[base_contents as usize] = vm.reg[sr as usize];
 }
 
 fn handle_str(mut vm: &mut vm, sr: u16, base_r: u16, offset: u16) {
@@ -260,11 +268,12 @@ fn handle_trap(mut vm: &mut vm, trap: u16) {
 fn getc(vm: &mut vm) {
     match terminal::enable_raw_mode() {
         Ok(_) => {
-            if let Ok(char) = read_kbd_event() {
+            if let Some(char) = read_kbd_event() {
                 let mut buffer = [0; 1];
                 let encoded_char = char.encode_utf8(&mut buffer);
                 vm.reg[0] = encoded_char.chars().nth(0).unwrap() as u16;
             }
+            terminal::disable_raw_mode().unwrap();
         }
         // abort early; don't retry as the error might be something on the user's part
         Err(e) => println!("Unable to read character from input due to error: {}", e),
@@ -272,18 +281,15 @@ fn getc(vm: &mut vm) {
 }
 
 // recursively read until we get a keyboard event or we error
-fn read_kbd_event() -> Result<char> {
-    match read() {
-        Ok(e) => match e {
-            event::Event::Key(k) => match k.code {
-                event::KeyCode::Char(c) => Ok(c),
-                _ => read_kbd_event(),
-            },
-            event::Event::Mouse(_) => read_kbd_event(),
-            event::Event::Resize(_, _) => read_kbd_event(),
-        },
-        Err(e) => Err(e),
-    }
+fn read_kbd_event() -> Option<char> {
+    terminal::enable_raw_mode().unwrap();
+    let c = std::io::stdin()
+        .bytes()
+        .next()
+        .and_then(|result| result.ok())
+        .map(|byte| byte as char);
+    terminal::disable_raw_mode().unwrap();
+    c
 }
 
 fn out(vm: &vm) {
@@ -292,28 +298,29 @@ fn out(vm: &vm) {
     println!("{}", new)
 }
 
-fn puts(vm: &vm) {
+fn puts(vm: &mut vm) {
     let mut addr = vm.reg[0];
-    while vm.mem[addr as usize] != 0x0000 {
-        print!("{}", vm.mem[addr as usize] as u8 as char);
+    while vm.mem_read(addr) != 0x0000 {
+        print!("{}", vm.mem_read(addr) as u8 as char);
         addr = overflowing_add(addr, 1);
     }
+    io::stdout().flush().expect("failed to flush");
 }
 
 fn inn(mut vm: &mut vm) {
     println!("please enter a single character");
     match read_kbd_event() {
-        Ok(c) => {
+        Some(c) => {
             println!("{}", c);
             vm.reg[0] = c as u16;
         }
-        Err(e) => panic!("we dun goofed: {}", e),
+        None => panic!("we dun goofed"),
     }
 }
 
-fn putsp(vm: &vm) {
+fn putsp(vm: &mut vm) {
     let mut addr = vm.reg[0];
-    while vm.mem[addr as usize] != 0x0000 {
+    while vm.mem_read(addr) != 0x0000 {
         let lower = (addr & 0x00FF) as u8;
         let upper = (addr & 0xFF00) as u8;
         print!("{}", lower as char);
@@ -323,6 +330,7 @@ fn putsp(vm: &vm) {
         }
         addr = overflowing_add(addr, 1);
     }
+    io::stdout().flush().expect("failed to flush");
 }
 
 fn halt() {
